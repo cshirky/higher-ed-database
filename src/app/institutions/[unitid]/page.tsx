@@ -2,7 +2,7 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { getInstitution, getInstitutionTimeSeries, getPeers, DEFAULT_YEAR } from "@/db/queries";
 import { INSTITUTION_TYPE_LABELS, CONTROL_LABELS } from "@/lib/institution-types";
-import { TimeSeriesChart } from "./charts";
+import { TimeSeriesChart } from "@/components/time-series-chart";
 import { PeerNetwork } from "./peer-network";
 
 function byYear<T extends { year: number }>(rows: T[]): Record<string, unknown>[] {

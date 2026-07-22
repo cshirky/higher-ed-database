@@ -33,9 +33,14 @@ export default function RootLayout({
             <a href="/" className="text-sm font-semibold tracking-tight">
               Higher-Ed Database
             </a>
-            <a href="/institutions" className="text-sm text-[var(--text-secondary)] hover:text-[var(--foreground)]">
-              Browse
-            </a>
+            <nav className="flex gap-5">
+              <a href="/institutions" className="text-sm text-[var(--text-secondary)] hover:text-[var(--foreground)]">
+                Browse
+              </a>
+              <a href="/compare" className="text-sm text-[var(--text-secondary)] hover:text-[var(--foreground)]">
+                Compare
+              </a>
+            </nav>
           </div>
         </header>
         <main className="flex flex-1 flex-col">{children}</main>

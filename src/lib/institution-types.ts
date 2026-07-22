@@ -12,6 +12,16 @@ export const INSTITUTION_TYPE_LABELS: Record<InstitutionType, string> = {
   other: "Other",
 };
 
+// Fixed identity color per institution type — same entity, same color, on every
+// chart it appears on (never reassigned by index/rank). Slots 1-3 of the
+// categorical palette, in the order the types are introduced in the app.
+export const INSTITUTION_TYPE_COLORS: Record<InstitutionType, string> = {
+  college: "var(--series-1)", // blue
+  university: "var(--series-2)", // green
+  graduate_school: "var(--series-3)", // magenta
+  other: "var(--series-4)",
+};
+
 export const CONTROL_LABELS: Record<number, string> = {
   1: "Public",
   2: "Private nonprofit",

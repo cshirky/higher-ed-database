@@ -103,6 +103,50 @@ export async function getInstitutionTimeSeries(unitid: number) {
   };
 }
 
+export type NationwideTrendRow = {
+  year: number;
+  institutionType: "college" | "university" | "graduate_school";
+  institutionCount: number;
+  totalEnrollment: number | null;
+  avgAdmitRate: number | null;
+  avgTuition: number | null;
+  avgGradRate: number | null;
+  avgInstructionExpense: number | null;
+};
+
+export async function getNationwideTrends(): Promise<NationwideTrendRow[]> {
+  const rows = await rawSql`
+    select
+      iy.year,
+      iy.institution_type,
+      count(*)::int as institution_count,
+      sum(e.total)::bigint as total_enrollment,
+      avg(a.pct_admitted_total) as avg_admit_rate,
+      avg(p.tuition_fees_in_state) as avg_tuition,
+      avg(gr.grad_rate_total) as avg_grad_rate,
+      avg(f.instruction_expense_per_fte) as avg_instruction_expense
+    from institution_years iy
+    left join enrollment e on e.unitid = iy.unitid and e.year = iy.year
+    left join admissions a on a.unitid = iy.unitid and a.year = iy.year
+    left join pricing p on p.unitid = iy.unitid and p.year = iy.year
+    left join graduation_rates gr on gr.unitid = iy.unitid and gr.year = iy.year
+    left join finance f on f.unitid = iy.unitid and f.year = iy.year
+    where iy.institution_type in ('college', 'university', 'graduate_school')
+    group by iy.year, iy.institution_type
+    order by iy.year, iy.institution_type
+  `;
+  return (rows as unknown as Array<Record<string, unknown>>).map((r) => ({
+    year: r.year as number,
+    institutionType: r.institution_type as NationwideTrendRow["institutionType"],
+    institutionCount: r.institution_count as number,
+    totalEnrollment: r.total_enrollment === null ? null : Number(r.total_enrollment),
+    avgAdmitRate: r.avg_admit_rate === null ? null : Number(r.avg_admit_rate),
+    avgTuition: r.avg_tuition === null ? null : Number(r.avg_tuition),
+    avgGradRate: r.avg_grad_rate === null ? null : Number(r.avg_grad_rate),
+    avgInstructionExpense: r.avg_instruction_expense === null ? null : Number(r.avg_instruction_expense),
+  }));
+}
+
 export type PeerMetricKey = "enrollment" | "admitRate" | "tuition" | "instructionExpense";
 
 export async function getPeers(unitid: number, year = DEFAULT_YEAR, limit = 12) {
