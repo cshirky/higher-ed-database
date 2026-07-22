@@ -45,10 +45,24 @@ async function ensureAccdb(year: number): Promise<string> {
     new AdmZip(zipPath).extractAllTo(extractDir, true);
   }
 
-  const files = await readdir(extractDir);
-  const accdb = files.find((f) => f.toLowerCase().endsWith(".accdb"));
+  const accdb = await findAccdb(extractDir);
   if (!accdb) throw new Error(`no .accdb found in ${extractDir}`);
-  return path.join(extractDir, accdb);
+  return accdb;
+}
+
+async function findAccdb(dir: string): Promise<string | null> {
+  const entries = await readdir(dir, { withFileTypes: true });
+  for (const entry of entries) {
+    const full = path.join(dir, entry.name);
+    if (entry.isFile() && entry.name.toLowerCase().endsWith(".accdb")) return full;
+  }
+  for (const entry of entries) {
+    if (entry.isDirectory()) {
+      const found = await findAccdb(path.join(dir, entry.name));
+      if (found) return found;
+    }
+  }
+  return null;
 }
 
 function tableOrNull(reader: MDBReader, name: string) {
