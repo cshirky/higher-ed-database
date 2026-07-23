@@ -94,38 +94,47 @@ async function loadYear(year: number) {
   const db = drizzle({ client: sqlClient, schema });
 
   // --- institution_years (HD) ---
+  // Scope (see .claude/skills/institution-scope): this project only covers
+  // degree-granting institutions (Associate's/Bachelor's/Master's/Doctoral).
+  // DEGGRANT=1 is the correct gate — UGOFFER/GROFFER alone are too broad and
+  // include certificate-only schools that grant no degree at all.
   const hd = tableOrNull(reader, `HD${year}`);
   if (!hd) throw new Error(`HD${year} not found`);
   const controlByUnitid = new Map<number, number | null>();
-  const institutionRows = hd.map((r: any) => {
-    const ugOffer = cleanInt(r.UGOFFER);
-    const grOffer = cleanInt(r.GROFFER);
-    controlByUnitid.set(r.UNITID, cleanInt(r.CONTROL));
-    return {
-      unitid: r.UNITID,
-      year,
-      name: r.INSTNM,
-      city: r.CITY ?? null,
-      state: r.STABBR ?? null,
-      zip: r.ZIP ?? null,
-      sector: cleanInt(r.SECTOR),
-      control: cleanInt(r.CONTROL),
-      iclevel: cleanInt(r.ICLEVEL),
-      locale: cleanInt(r.LOCALE),
-      instSize: cleanInt(r.INSTSIZE),
-      hbcu: cleanInt(r.HBCU),
-      tribal: cleanInt(r.TRIBAL),
-      ugOffer,
-      grOffer,
-      highestOffering: cleanInt(r.HLOFFER),
-      institutionType: institutionType(ugOffer, grOffer),
-      carnegieClassification: cleanInt(r.CARNEGIE),
-      longitude: r.LONGITUD ?? null,
-      latitude: r.LATITUDE ?? null,
-    };
-  });
+  const degreeGrantingUnitids = new Set<number>(
+    hd.filter((r: any) => cleanInt(r.DEGGRANT) === 1).map((r: any) => r.UNITID),
+  );
+  const institutionRows = hd
+    .filter((r: any) => degreeGrantingUnitids.has(r.UNITID))
+    .map((r: any) => {
+      const ugOffer = cleanInt(r.UGOFFER);
+      const grOffer = cleanInt(r.GROFFER);
+      controlByUnitid.set(r.UNITID, cleanInt(r.CONTROL));
+      return {
+        unitid: r.UNITID,
+        year,
+        name: r.INSTNM,
+        city: r.CITY ?? null,
+        state: r.STABBR ?? null,
+        zip: r.ZIP ?? null,
+        sector: cleanInt(r.SECTOR),
+        control: cleanInt(r.CONTROL),
+        iclevel: cleanInt(r.ICLEVEL),
+        locale: cleanInt(r.LOCALE),
+        instSize: cleanInt(r.INSTSIZE),
+        hbcu: cleanInt(r.HBCU),
+        tribal: cleanInt(r.TRIBAL),
+        ugOffer,
+        grOffer,
+        highestOffering: cleanInt(r.HLOFFER),
+        institutionType: institutionType(ugOffer, grOffer),
+        carnegieClassification: cleanInt(r.CARNEGIE),
+        longitude: r.LONGITUD ?? null,
+        latitude: r.LATITUDE ?? null,
+      };
+    });
   await batchedUpsert(db, schema.institutionYears, institutionRows, ["unitid", "year"]);
-  console.log(`  institution_years: ${institutionRows.length}`);
+  console.log(`  institution_years: ${institutionRows.length} (${hd.length - institutionRows.length} non-degree-granting excluded)`);
 
   // --- admissions (ADM, falling back to IC for pre-2014 years) ---
   const adm = tableOrNull(reader, `ADM${year}`) ?? tableOrNull(reader, `IC${year}`);
@@ -133,7 +142,7 @@ async function loadYear(year: number) {
   const drvadmByUnitid = new Map<number, any>((drvadm ?? []).map((r: any) => [r.UNITID, r]));
   if (adm) {
     const admissionsRows = adm
-      .filter((r: any) => r.APPLCN !== undefined)
+      .filter((r: any) => r.APPLCN !== undefined && degreeGrantingUnitids.has(r.UNITID))
       .map((r: any) => {
         const derived = drvadmByUnitid.get(r.UNITID);
         return {
@@ -170,7 +179,9 @@ async function loadYear(year: number) {
   // --- enrollment (DRVEF) ---
   const drvef = tableOrNull(reader, `DRVEF${year}`);
   if (drvef) {
-    const enrollmentRows = drvef.map((r: any) => ({
+    const enrollmentRows = drvef
+      .filter((r: any) => degreeGrantingUnitids.has(r.UNITID))
+      .map((r: any) => ({
       unitid: r.UNITID,
       year,
       total: cleanInt(r.ENRTOT),
@@ -200,7 +211,9 @@ async function loadYear(year: number) {
   // --- completions (DRVC) ---
   const drvc = tableOrNull(reader, `DRVC${year}`);
   if (drvc) {
-    const completionsRows = drvc.map((r: any) => ({
+    const completionsRows = drvc
+      .filter((r: any) => degreeGrantingUnitids.has(r.UNITID))
+      .map((r: any) => ({
       unitid: r.UNITID,
       year,
       certificatesLtOneYear: cleanInt(r.CERT1),
@@ -224,7 +237,9 @@ async function loadYear(year: number) {
   // --- graduation_rates (DRVGR) ---
   const drvgr = tableOrNull(reader, `DRVGR${year}`);
   if (drvgr) {
-    const gradRows = drvgr.map((r: any) => ({
+    const gradRows = drvgr
+      .filter((r: any) => degreeGrantingUnitids.has(r.UNITID))
+      .map((r: any) => ({
       unitid: r.UNITID,
       year,
       gradRateTotal: cleanNum(r.GRRTTOT),
@@ -250,7 +265,9 @@ async function loadYear(year: number) {
   // --- finance (DRVF) — pick F1 (GASB/public), F2 (FASB/nonprofit) or F3 (for-profit) by control ---
   const drvf = tableOrNull(reader, `DRVF${year}`);
   if (drvf) {
-    const financeRows = drvf.map((r: any) => {
+    const financeRows = drvf
+      .filter((r: any) => degreeGrantingUnitids.has(r.UNITID))
+      .map((r: any) => {
       const control = controlByUnitid.get(r.UNITID);
       const prefix = control === 1 ? "F1" : control === 3 ? "F3" : "F2";
       const standard = control === 1 ? "gasb" : control === 3 ? "fasb_forprofit" : "fasb";
@@ -279,7 +296,9 @@ async function loadYear(year: number) {
   // --- pricing (DRVIC) ---
   const drvic = tableOrNull(reader, `DRVIC${year}`);
   if (drvic) {
-    const pricingRows = drvic.map((r: any) => ({
+    const pricingRows = drvic
+      .filter((r: any) => degreeGrantingUnitids.has(r.UNITID))
+      .map((r: any) => ({
       unitid: r.UNITID,
       year,
       tuitionFeesInState: cleanInt(r.TUFEYR3),
@@ -298,7 +317,9 @@ async function loadYear(year: number) {
   // --- faculty (DRVHR) ---
   const drvhr = tableOrNull(reader, `DRVHR${year}`);
   if (drvhr) {
-    const facultyRows = drvhr.map((r: any) => ({
+    const facultyRows = drvhr
+      .filter((r: any) => degreeGrantingUnitids.has(r.UNITID))
+      .map((r: any) => ({
       unitid: r.UNITID,
       year,
       avgSalaryAllRanks: cleanInt(r.SALTOTL),
@@ -321,7 +342,7 @@ async function loadYear(year: number) {
   const sfa = tableOrNull(reader, `SFA${fiscalSuffix}_P1`);
   if (sfa) {
     const aidRows = sfa
-      .filter((r: any) => r.UNITID !== undefined)
+      .filter((r: any) => r.UNITID !== undefined && degreeGrantingUnitids.has(r.UNITID))
       .map((r: any) => ({
         unitid: r.UNITID,
         year,
