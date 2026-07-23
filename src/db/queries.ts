@@ -1,5 +1,5 @@
 import { and, asc, desc, eq, ilike, sql } from "drizzle-orm";
-import { db, sql as rawSql } from "./index";
+import { db } from "./index";
 import {
   institutionYears,
   admissions,
@@ -10,6 +10,8 @@ import {
   pricing,
   faculty,
   financialAid,
+  nationwideTrends,
+  peerNetwork,
 } from "./schema";
 
 // The most recent year we treat as "current" for browse/comparison views.
@@ -115,99 +117,45 @@ export type NationwideTrendRow = {
 };
 
 export async function getNationwideTrends(): Promise<NationwideTrendRow[]> {
-  const rows = await rawSql`
-    select
-      iy.year,
-      iy.institution_type,
-      count(*)::int as institution_count,
-      sum(e.total)::bigint as total_enrollment,
-      avg(a.pct_admitted_total) as avg_admit_rate,
-      avg(p.tuition_fees_in_state) as avg_tuition,
-      avg(gr.grad_rate_total) as avg_grad_rate,
-      avg(f.instruction_expense_per_fte) as avg_instruction_expense
-    from institution_years iy
-    left join enrollment e on e.unitid = iy.unitid and e.year = iy.year
-    left join admissions a on a.unitid = iy.unitid and a.year = iy.year
-    left join pricing p on p.unitid = iy.unitid and p.year = iy.year
-    left join graduation_rates gr on gr.unitid = iy.unitid and gr.year = iy.year
-    left join finance f on f.unitid = iy.unitid and f.year = iy.year
-    where iy.institution_type in ('college', 'university', 'graduate_school')
-    group by iy.year, iy.institution_type
-    order by iy.year, iy.institution_type
-  `;
-  return (rows as unknown as Array<Record<string, unknown>>).map((r) => ({
-    year: r.year as number,
-    institutionType: r.institution_type as NationwideTrendRow["institutionType"],
-    institutionCount: r.institution_count as number,
-    totalEnrollment: r.total_enrollment === null ? null : Number(r.total_enrollment),
-    avgAdmitRate: r.avg_admit_rate === null ? null : Number(r.avg_admit_rate),
-    avgTuition: r.avg_tuition === null ? null : Number(r.avg_tuition),
-    avgGradRate: r.avg_grad_rate === null ? null : Number(r.avg_grad_rate),
-    avgInstructionExpense: r.avg_instruction_expense === null ? null : Number(r.avg_instruction_expense),
+  // Precomputed by scripts/etl/materialize.ts — see .claude/skills/precompute-over-live-query.
+  const rows = await db
+    .select()
+    .from(nationwideTrends)
+    .orderBy(asc(nationwideTrends.year), asc(nationwideTrends.institutionType));
+  return rows.map((r) => ({
+    year: r.year,
+    institutionType: r.institutionType as NationwideTrendRow["institutionType"],
+    institutionCount: r.institutionCount,
+    totalEnrollment: r.totalEnrollment,
+    avgAdmitRate: r.avgAdmitRate,
+    avgTuition: r.avgTuition,
+    avgGradRate: r.avgGradRate,
+    avgInstructionExpense: r.avgInstructionExpense,
   }));
 }
 
-export type PeerMetricKey = "enrollment" | "admitRate" | "tuition" | "instructionExpense";
-
 export async function getPeers(unitid: number, year = DEFAULT_YEAR, limit = 12) {
+  // Precomputed by scripts/etl/materialize.ts — see .claude/skills/precompute-over-live-query.
   // Peer/similarity network: IPEDS has no institution-to-institution relationship
   // data, so this is a derived nearest-neighbor graph over a handful of
   // z-normalized metrics, restricted to the same institution_type so a
   // community college is never compared against a research university.
-  const rows = await rawSql`
-    with base as (
-      select
-        iy.unitid,
-        iy.name,
-        iy.state,
-        iy.institution_type,
-        e.total as enrollment_total,
-        a.pct_admitted_total as admit_rate,
-        p.tuition_fees_in_state as tuition,
-        f.instruction_expense_per_fte as instruction_expense
-      from institution_years iy
-      left join enrollment e on e.unitid = iy.unitid and e.year = iy.year
-      left join admissions a on a.unitid = iy.unitid and a.year = iy.year
-      left join pricing p on p.unitid = iy.unitid and p.year = iy.year
-      left join finance f on f.unitid = iy.unitid and f.year = iy.year
-      where iy.year = ${year}
-        and iy.institution_type = (select institution_type from institution_years where unitid = ${unitid} and year = ${year})
-    ),
-    stats as (
-      select
-        avg(enrollment_total) as e_mean, stddev(enrollment_total) as e_std,
-        avg(admit_rate) as a_mean, stddev(admit_rate) as a_std,
-        avg(tuition) as t_mean, stddev(tuition) as t_std,
-        avg(instruction_expense) as x_mean, stddev(instruction_expense) as x_std
-      from base
-    ),
-    target as (
-      select * from base where unitid = ${unitid}
+  const rows = await db
+    .select({
+      unitid: peerNetwork.peerUnitid,
+      distance: peerNetwork.distance,
+      name: institutionYears.name,
+      state: institutionYears.state,
+      institutionType: institutionYears.institutionType,
+    })
+    .from(peerNetwork)
+    .innerJoin(
+      institutionYears,
+      and(eq(institutionYears.unitid, peerNetwork.peerUnitid), eq(institutionYears.year, peerNetwork.year)),
     )
-    select
-      b.unitid, b.name, b.state, b.institution_type,
-      b.enrollment_total, b.admit_rate, b.tuition, b.instruction_expense,
-      sqrt(
-        coalesce(power((b.enrollment_total - t.enrollment_total) / nullif(s.e_std, 0), 2), 0) +
-        coalesce(power((b.admit_rate - t.admit_rate) / nullif(s.a_std, 0), 2), 0) +
-        coalesce(power((b.tuition - t.tuition) / nullif(s.t_std, 0), 2), 0) +
-        coalesce(power((b.instruction_expense - t.instruction_expense) / nullif(s.x_std, 0), 2), 0)
-      ) as distance
-    from base b, stats s, target t
-    where b.unitid != ${unitid}
-      and b.enrollment_total is not null
-    order by distance asc
-    limit ${limit}
-  `;
-  return rows as unknown as Array<{
-    unitid: number;
-    name: string;
-    state: string | null;
-    institution_type: string;
-    enrollment_total: number | null;
-    admit_rate: number | null;
-    tuition: number | null;
-    instruction_expense: number | null;
-    distance: number;
-  }>;
+    .where(and(eq(peerNetwork.unitid, unitid), eq(peerNetwork.year, year)))
+    .orderBy(asc(peerNetwork.rank))
+    .limit(limit);
+
+  return rows;
 }

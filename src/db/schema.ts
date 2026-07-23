@@ -233,3 +233,37 @@ export const financialAid = pgTable(
     index("financial_aid_year_idx").on(t.year),
   ],
 );
+
+// Precomputed by scripts/etl/materialize.ts, not queried live — see
+// .claude/skills/precompute-over-live-query. IPEDS data only changes when the
+// ETL backfill reruns, so there's no benefit to recalculating these on every
+// page view.
+export const nationwideTrends = pgTable(
+  "nationwide_trends",
+  {
+    institutionType: text("institution_type").notNull(),
+    year: smallint("year").notNull(),
+    institutionCount: integer("institution_count").notNull(),
+    totalEnrollment: bigint("total_enrollment", { mode: "number" }),
+    avgAdmitRate: doublePrecision("avg_admit_rate"),
+    avgTuition: doublePrecision("avg_tuition"),
+    avgGradRate: doublePrecision("avg_grad_rate"),
+    avgInstructionExpense: doublePrecision("avg_instruction_expense"),
+  },
+  (t) => [primaryKey({ columns: [t.institutionType, t.year] })],
+);
+
+export const peerNetwork = pgTable(
+  "peer_network",
+  {
+    unitid: integer("unitid").notNull(),
+    year: smallint("year").notNull(),
+    rank: smallint("rank").notNull(),
+    peerUnitid: integer("peer_unitid").notNull(),
+    distance: doublePrecision("distance").notNull(),
+  },
+  (t) => [
+    primaryKey({ columns: [t.unitid, t.year, t.rank] }),
+    index("peer_network_unitid_year_idx").on(t.unitid, t.year),
+  ],
+);
