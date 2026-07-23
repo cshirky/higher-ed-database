@@ -40,3 +40,6 @@ yarn-error.log*
 *.tsbuildinfo
 next-env.d.ts
 data/ipeds-cache/
+
+# local-only exports/scratch data, not part of the app
+/Data/
