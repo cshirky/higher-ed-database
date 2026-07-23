@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import { getInstitution, getInstitutionTimeSeries, getPeers, DEFAULT_YEAR } from "@/db/queries";
+import { getInstitution, getInstitutionTimeSeries, getPeers, getAcademicPeers, DEFAULT_YEAR } from "@/db/queries";
 import { INSTITUTION_TYPE_LABELS, CONTROL_LABELS } from "@/lib/institution-types";
 import { TimeSeriesChart } from "@/components/time-series-chart";
 import { PeerNetwork } from "./peer-network";
@@ -15,9 +15,10 @@ export default async function InstitutionPage({ params }: { params: Promise<{ un
   const institution = await getInstitution(unitid);
   if (!institution) notFound();
 
-  const [series, peers] = await Promise.all([
+  const [series, overallPeers, academicPeers] = await Promise.all([
     getInstitutionTimeSeries(unitid),
     getPeers(unitid, DEFAULT_YEAR),
+    getAcademicPeers(unitid, DEFAULT_YEAR),
   ]);
 
   const typeLabel = INSTITUTION_TYPE_LABELS[institution.institutionType as keyof typeof INSTITUTION_TYPE_LABELS] ?? institution.institutionType;
@@ -109,7 +110,22 @@ export default async function InstitutionPage({ params }: { params: Promise<{ un
       <div className="mt-6">
         <PeerNetwork
           target={{ unitid: institution.unitid, name: institution.name, state: institution.state }}
-          peers={peers.map((p) => ({ unitid: p.unitid, name: p.name, state: p.state, distance: p.distance }))}
+          modes={[
+            {
+              key: "overall",
+              label: "Overall profile",
+              description:
+                "Institutions of the same type, positioned by similarity across enrollment, admit rate, tuition, and instructional spending per student. Closer = more similar.",
+              peers: overallPeers.map((p) => ({ unitid: p.unitid, name: p.name, state: p.state, distance: p.distance })),
+            },
+            {
+              key: "academic",
+              label: "Academic programs",
+              description:
+                "Institutions of the same type, positioned by overlap in subjects and degree levels offered and by how many students earn those degrees. Closer = more similar academic offerings.",
+              peers: academicPeers.map((p) => ({ unitid: p.unitid, name: p.name, state: p.state, distance: p.distance })),
+            },
+          ]}
         />
       </div>
     </div>

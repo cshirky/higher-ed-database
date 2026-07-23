@@ -15,11 +15,22 @@ type PeerNode = {
 
 type SimNode = PeerNode & d3.SimulationNodeDatum;
 
-export function PeerNetwork({ target, peers }: { target: { unitid: number; name: string; state: string | null }; peers: PeerNode[] }) {
+export type PeerMode = {
+  key: string;
+  label: string;
+  description: string;
+  peers: PeerNode[];
+};
+
+export function PeerNetwork({ target, modes }: { target: { unitid: number; name: string; state: string | null }; modes: PeerMode[] }) {
   const svgRef = useRef<SVGSVGElement>(null);
   const [hovered, setHovered] = useState<number | null>(null);
+  const [modeKey, setModeKey] = useState(modes[0].key);
   const width = 640;
   const height = 420;
+
+  const mode = modes.find((m) => m.key === modeKey) ?? modes[0];
+  const peers = mode.peers;
 
   const nodes: SimNode[] = [
     { ...target, distance: 0, isTarget: true },
@@ -28,6 +39,9 @@ export function PeerNetwork({ target, peers }: { target: { unitid: number; name:
   const links = peers.map((p) => ({ source: target.unitid, target: p.unitid, distance: p.distance }));
 
   const [positions, setPositions] = useState<Map<number, { x: number; y: number }> | null>(null);
+  // Positions are computed per-mode; guard against the one stale render between
+  // a mode switch (new `peers`) and the effect below recomputing positions for it.
+  const positionsReady = positions !== null && nodes.every((n) => positions!.has(n.unitid));
 
   useEffect(() => {
     const sim = d3
@@ -50,25 +64,37 @@ export function PeerNetwork({ target, peers }: { target: { unitid: number; name:
     for (const n of nodes) next.set(n.unitid, { x: n.x ?? width / 2, y: n.y ?? height / 2 });
     setPositions(next);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [target.unitid, peers.length]);
-
-  if (peers.length === 0) {
-    return (
-      <div className="rounded-lg border border-[var(--border)] bg-[var(--surface)] p-4 text-sm text-[var(--text-muted)]">
-        Not enough comparable institutions with complete data to build a peer network.
-      </div>
-    );
-  }
+  }, [target.unitid, modeKey, peers.length]);
 
   return (
     <div className="rounded-lg border border-[var(--border)] bg-[var(--surface)] p-4">
-      <h3 className="text-sm font-medium">Peer network</h3>
-      <p className="mt-1 text-xs text-[var(--text-muted)]">
-        Institutions of the same type, positioned by similarity across enrollment, admit rate, tuition, and instructional
-        spending per student. Closer = more similar.
-      </p>
+      <div className="flex items-center justify-between gap-3">
+        <h3 className="text-sm font-medium">Peer network</h3>
+        <div className="flex gap-1 rounded-md border border-[var(--border)] p-0.5">
+          {modes.map((m) => (
+            <button
+              key={m.key}
+              onClick={() => setModeKey(m.key)}
+              className={`rounded px-2.5 py-1 text-xs font-medium transition-colors ${
+                m.key === modeKey
+                  ? "bg-[var(--series-1)] text-white"
+                  : "text-[var(--text-secondary)] hover:bg-[var(--background)]"
+              }`}
+            >
+              {m.label}
+            </button>
+          ))}
+        </div>
+      </div>
+      <p className="mt-1 text-xs text-[var(--text-muted)]">{mode.description}</p>
+      {peers.length === 0 ? (
+        <p className="mt-8 mb-8 text-center text-sm text-[var(--text-muted)]">
+          Not enough comparable institutions with complete data to build this network.
+        </p>
+      ) : (
+        <>
       <svg ref={svgRef} viewBox={`0 0 ${width} ${height}`} className="mt-3 w-full" style={{ maxHeight: 420 }}>
-        {positions &&
+        {positionsReady &&
           links.map((l, i) => {
             const s = positions.get(target.unitid)!;
             const t = positions.get(peers[i].unitid)!;
@@ -84,7 +110,7 @@ export function PeerNetwork({ target, peers }: { target: { unitid: number; name:
               />
             );
           })}
-        {positions &&
+        {positionsReady &&
           nodes.map((n) => {
             const p = positions.get(n.unitid)!;
             return (
@@ -125,6 +151,8 @@ export function PeerNetwork({ target, peers }: { target: { unitid: number; name:
           </li>
         ))}
       </ul>
+        </>
+      )}
     </div>
   );
 }

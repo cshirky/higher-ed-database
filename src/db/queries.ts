@@ -12,6 +12,7 @@ import {
   financialAid,
   nationwideTrends,
   peerNetwork,
+  academicSimilarity,
 } from "./schema";
 
 // The most recent year we treat as "current" for browse/comparison views.
@@ -134,28 +135,39 @@ export async function getNationwideTrends(): Promise<NationwideTrendRow[]> {
   }));
 }
 
-export async function getPeers(unitid: number, year = DEFAULT_YEAR, limit = 12) {
-  // Precomputed by scripts/etl/materialize.ts — see .claude/skills/precompute-over-live-query.
-  // Peer/similarity network: IPEDS has no institution-to-institution relationship
-  // data, so this is a derived nearest-neighbor graph over a handful of
-  // z-normalized metrics, restricted to the same institution_type so a
-  // community college is never compared against a research university.
-  const rows = await db
+// peer_network and academic_similarity are both (unitid, year, rank, peer_unitid,
+// distance) — shared shape, so one helper reads either.
+function peersFromTable(
+  table: typeof peerNetwork | typeof academicSimilarity,
+  unitid: number,
+  year: number,
+  limit: number,
+) {
+  return db
     .select({
-      unitid: peerNetwork.peerUnitid,
-      distance: peerNetwork.distance,
+      unitid: table.peerUnitid,
+      distance: table.distance,
       name: institutionYears.name,
       state: institutionYears.state,
       institutionType: institutionYears.institutionType,
     })
-    .from(peerNetwork)
-    .innerJoin(
-      institutionYears,
-      and(eq(institutionYears.unitid, peerNetwork.peerUnitid), eq(institutionYears.year, peerNetwork.year)),
-    )
-    .where(and(eq(peerNetwork.unitid, unitid), eq(peerNetwork.year, year)))
-    .orderBy(asc(peerNetwork.rank))
+    .from(table)
+    .innerJoin(institutionYears, and(eq(institutionYears.unitid, table.peerUnitid), eq(institutionYears.year, table.year)))
+    .where(and(eq(table.unitid, unitid), eq(table.year, year)))
+    .orderBy(asc(table.rank))
     .limit(limit);
+}
 
-  return rows;
+export async function getPeers(unitid: number, year = DEFAULT_YEAR, limit = 12) {
+  // Precomputed by scripts/etl/materialize.ts — see .claude/skills/precompute-over-live-query.
+  // Overall-profile similarity: IPEDS has no institution-to-institution relationship
+  // data, so this is a derived nearest-neighbor graph over a handful of
+  // z-normalized metrics (enrollment, admit rate, tuition, instructional spending),
+  // restricted to the same institution_type.
+  return peersFromTable(peerNetwork, unitid, year, limit);
+}
+
+export async function getAcademicPeers(unitid: number, year = DEFAULT_YEAR, limit = 12) {
+  // Academic-program similarity — see .claude/skills/academic-similarity.
+  return peersFromTable(academicSimilarity, unitid, year, limit);
 }
