@@ -16,31 +16,48 @@ or two stale). Given that, **prefer writing results out for display over
 recalculating them dynamically on every request.** There's no freshness
 benefit to live computation here — only extra latency and database load.
 
-## Where this applies today
+## Implemented so far
 
-- `getNationwideTrends()` (`src/db/queries.ts`) — a 5-table join + `group by`
-  across ~90k+ rows, run fresh on every `/compare` page load. This result
-  only changes when the ETL backfill reruns (rare, manual, currently annual
-  at most).
-- `getPeers()` (`src/db/queries.ts`) — computes z-normalized similarity
-  distance across an entire institution-type cohort, per request, for every
-  `/institutions/[unitid]` page view.
+- `nationwide_trends` table, read by `getNationwideTrends()` — backs
+  `/compare`. Formerly a live 5-table join + `group by` across ~90k+ rows on
+  every page load.
+- `peer_network` table, read by `getPeers()` — backs the peer-similarity
+  section of `/institutions/[unitid]`. Formerly an O(n²) z-normalized
+  similarity computation across the whole institution-type cohort, per
+  request.
 
-Both are candidates to precompute once (as part of or right after the ETL
-load) and store, rather than compute per page view.
+Both are now filled by `scripts/etl/materialize.ts` and queried with a plain
+indexed `select` — no live join/aggregation happens on request anymore.
 
-## How to apply
+## IMPORTANT: re-run materialize.ts after every backfill
 
-- Add a "materialize" step to the ETL pipeline (either inside
-  `scripts/etl/load-year.ts` or a separate `scripts/etl/materialize.ts` run
-  after a backfill) that computes these aggregates once and writes them to
-  dedicated tables (e.g. `nationwide_trends`, `peer_network`). Pages then do
-  a plain indexed `select`, not a live join/aggregation.
+**`scripts/etl/materialize.ts` must be re-run any time `load-year.ts` is run**
+— for a fresh year, a re-backfill, or a scope/classification change (like the
+`DEGGRANT` fix). `nationwide_trends` and `peer_network` are snapshots computed
+from the fact tables at materialize time; they do **not** update themselves,
+so skipping this step leaves `/compare` and every institution's peer network
+silently serving stale data even though the underlying tables are current.
+
+```bash
+npx tsx scripts/etl/load-year.ts <years...>
+npx tsx scripts/etl/materialize.ts   # always follows a backfill, no exceptions
+```
+
+If a scope change alters which institutions exist (like a `DEGGRANT` fix),
+remember `load-year.ts` upserts but never deletes — truncate the affected
+tables first (see `scripts/etl/truncate-all.ts`) before backfilling, same as
+before materializing.
+
+## How to apply going forward
+
+- New aggregate views (rankings, leaderboards, additional nationwide cuts,
+  etc.) should follow the same pattern: add a table, fill it in
+  `materialize.ts`, query it with a plain `select`. Don't add another live
+  join/aggregation query.
 - Only recompute when the ETL pipeline actually reruns — not on a timer, not
   on every deploy, and not per-request.
-- If a fully precomputed table is overkill for a given case, the lighter
+- If a fully precomputed table is overkill for some future case, the lighter
   option is Next.js's own static/ISR revalidation (`export const revalidate`
   on the route segment, or on-demand revalidation triggered right after an
-  ETL run) so the *page* is cached even if the query itself stays live —
-  but writing the result out to a real table is the preferred approach here,
-  not just an HTTP/render cache.
+  ETL run) — but a stored table is the preferred approach here, not just an
+  HTTP/render cache.
