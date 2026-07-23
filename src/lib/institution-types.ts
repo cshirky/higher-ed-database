@@ -33,3 +33,19 @@ export const SECTOR_LEVEL_LABELS: Record<number, string> = {
   2: "2-year",
   3: "Less than 2-year",
 };
+
+// IPEDS Urban-Centric Locale codes
+export const LOCALE_LABELS: Record<number, string> = {
+  11: "City: Large",
+  12: "City: Midsize",
+  13: "City: Small",
+  21: "Suburb: Large",
+  22: "Suburb: Midsize",
+  23: "Suburb: Small",
+  31: "Town: Fringe",
+  32: "Town: Distant",
+  33: "Town: Remote",
+  41: "Rural: Fringe",
+  42: "Rural: Distant",
+  43: "Rural: Remote",
+};

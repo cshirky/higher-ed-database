@@ -1,7 +1,8 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import { getInstitution, getInstitutionTimeSeries, getPeers, getAcademicPeers, DEFAULT_YEAR } from "@/db/queries";
-import { INSTITUTION_TYPE_LABELS, CONTROL_LABELS } from "@/lib/institution-types";
+import { getInstitution, getInstitutionTimeSeries, getPeers, getAcademicPeers, getTopAndBottomDegrees, DEFAULT_YEAR } from "@/db/queries";
+import { INSTITUTION_TYPE_LABELS, CONTROL_LABELS, LOCALE_LABELS } from "@/lib/institution-types";
+import { CIP_PREFIX_LABELS } from "@/lib/cip-labels";
 import { TimeSeriesChart } from "@/components/time-series-chart";
 import { PeerNetwork } from "./peer-network";
 
@@ -15,14 +16,18 @@ export default async function InstitutionPage({ params }: { params: Promise<{ un
   const institution = await getInstitution(unitid);
   if (!institution) notFound();
 
-  const [series, overallPeers, academicPeers] = await Promise.all([
+  const [series, overallPeers, academicPeers, degrees] = await Promise.all([
     getInstitutionTimeSeries(unitid),
     getPeers(unitid, DEFAULT_YEAR),
     getAcademicPeers(unitid, DEFAULT_YEAR),
+    getTopAndBottomDegrees(unitid, DEFAULT_YEAR),
   ]);
 
   const typeLabel = INSTITUTION_TYPE_LABELS[institution.institutionType as keyof typeof INSTITUTION_TYPE_LABELS] ?? institution.institutionType;
   const controlLabel = institution.control ? CONTROL_LABELS[institution.control] ?? "—" : "—";
+  const localeLabel = institution.locale ? (LOCALE_LABELS[institution.locale] ?? "—") : "—";
+  const yieldRow = [...series.admissions].reverse().find((r) => r.yieldTotal != null);
+  const yieldPct = yieldRow?.yieldTotal != null ? `${Math.round(yieldRow.yieldTotal * 100)}%` : "—";
 
   return (
     <div className="mx-auto w-full max-w-5xl px-6 py-12">
@@ -34,6 +39,47 @@ export default async function InstitutionPage({ params }: { params: Promise<{ un
       <p className="mt-1 text-[var(--text-secondary)]">
         {institution.city}, {institution.state} · {typeLabel} · {controlLabel}
       </p>
+
+      <div className="mt-6 rounded-lg border border-[var(--border)] bg-[var(--surface)] p-5">
+        <div className="grid grid-cols-2 gap-x-8 gap-y-5 sm:grid-cols-4">
+          <div>
+            <p className="text-xs font-medium uppercase tracking-wide text-[var(--text-muted)]">Locale</p>
+            <p className="mt-1 text-sm font-medium">{localeLabel}</p>
+          </div>
+          <div>
+            <p className="text-xs font-medium uppercase tracking-wide text-[var(--text-muted)]">Yield</p>
+            <p className="mt-1 text-sm font-medium">{yieldPct}</p>
+          </div>
+          <div className="col-span-2 sm:col-span-1">
+            <p className="text-xs font-medium uppercase tracking-wide text-[var(--text-muted)]">Most Popular Degrees</p>
+            <ol className="mt-1 space-y-0.5">
+              {degrees.top5.map((d, i) => (
+                <li key={d.prefix} className="flex items-baseline justify-between gap-2 text-sm">
+                  <span className="text-[var(--text-secondary)]">
+                    {i + 1}. {CIP_PREFIX_LABELS[d.prefix] ?? `CIP ${d.prefix}`}
+                  </span>
+                  <span className="shrink-0 tabular-nums text-[var(--text-muted)]">{d.total.toLocaleString()}</span>
+                </li>
+              ))}
+              {degrees.top5.length === 0 && <li className="text-sm text-[var(--text-muted)]">—</li>}
+            </ol>
+          </div>
+          <div className="col-span-2 sm:col-span-1">
+            <p className="text-xs font-medium uppercase tracking-wide text-[var(--text-muted)]">Least Common Degrees</p>
+            <ol className="mt-1 space-y-0.5">
+              {degrees.bottom5.map((d) => (
+                <li key={d.prefix} className="flex items-baseline justify-between gap-2 text-sm">
+                  <span className="text-[var(--text-secondary)]">
+                    {CIP_PREFIX_LABELS[d.prefix] ?? `CIP ${d.prefix}`}
+                  </span>
+                  <span className="shrink-0 tabular-nums text-[var(--text-muted)]">{d.total.toLocaleString()}</span>
+                </li>
+              ))}
+              {degrees.bottom5.length === 0 && <li className="text-sm text-[var(--text-muted)]">—</li>}
+            </ol>
+          </div>
+        </div>
+      </div>
 
       <div className="mt-10 grid grid-cols-1 gap-4 sm:grid-cols-2">
         <TimeSeriesChart

@@ -13,6 +13,7 @@ import {
   nationwideTrends,
   peerNetwork,
   academicSimilarity,
+  completionsByField,
 } from "./schema";
 
 // The most recent year we treat as "current" for browse/comparison views.
@@ -170,4 +171,22 @@ export async function getPeers(unitid: number, year = DEFAULT_YEAR, limit = 12) 
 export async function getAcademicPeers(unitid: number, year = DEFAULT_YEAR, limit = 12) {
   // Academic-program similarity — see .claude/skills/academic-similarity.
   return peersFromTable(academicSimilarity, unitid, year, limit);
+}
+
+export async function getTopAndBottomDegrees(unitid: number, year = DEFAULT_YEAR) {
+  const rows = await db
+    .select({
+      prefix: sql<string>`LEFT(${completionsByField.cipCode}, 2)`,
+      total: sql<number>`SUM(${completionsByField.count})`,
+    })
+    .from(completionsByField)
+    .where(and(eq(completionsByField.unitid, unitid), eq(completionsByField.year, year)))
+    .groupBy(sql`LEFT(${completionsByField.cipCode}, 2)`)
+    .having(sql`SUM(${completionsByField.count}) > 0`)
+    .orderBy(sql`SUM(${completionsByField.count}) DESC`);
+
+  return {
+    top5: rows.slice(0, 5),
+    bottom5: [...rows].slice(-5).reverse(),
+  };
 }
