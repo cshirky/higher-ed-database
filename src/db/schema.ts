@@ -267,3 +267,36 @@ export const peerNetwork = pgTable(
     index("peer_network_unitid_year_idx").on(t.unitid, t.year),
   ],
 );
+
+// Degrees conferred by 6-digit CIP code (subject) and award level, first
+// major only (MAJORNUM=1, avoids double-counting double majors). Source for
+// academic-similarity — see .claude/skills/academic-similarity.
+export const completionsByField = pgTable(
+  "completions_by_field",
+  {
+    unitid: integer("unitid").notNull(),
+    year: smallint("year").notNull(),
+    cipCode: text("cip_code").notNull(),
+    awardLevel: smallint("award_level").notNull(),
+    count: integer("count").notNull(),
+  },
+  (t) => [
+    primaryKey({ columns: [t.unitid, t.year, t.cipCode, t.awardLevel] }),
+    index("completions_by_field_year_idx").on(t.year),
+  ],
+);
+
+export const academicSimilarity = pgTable(
+  "academic_similarity",
+  {
+    unitid: integer("unitid").notNull(),
+    year: smallint("year").notNull(),
+    rank: smallint("rank").notNull(),
+    peerUnitid: integer("peer_unitid").notNull(),
+    distance: doublePrecision("distance").notNull(),
+  },
+  (t) => [
+    primaryKey({ columns: [t.unitid, t.year, t.rank] }),
+    index("academic_similarity_unitid_year_idx").on(t.unitid, t.year),
+  ],
+);

@@ -65,10 +65,27 @@ async function findAccdb(dir: string): Promise<string | null> {
   return null;
 }
 
-function tableOrNull(reader: MDBReader, name: string) {
+function tableOrNull(reader: MDBReader, name: string, columns?: string[]) {
   const actualName = reader.getTableNames().find((n) => n.toLowerCase() === name.toLowerCase());
   if (!actualName) return null;
-  const rows = reader.getTable(actualName).getData();
+  const table = reader.getTable(actualName);
+  // Project to only the needed columns where given — some raw survey tables
+  // (e.g. C{year}_A) have ~30 demographic-breakdown columns per row across
+  // 1M+ rows; materializing all of them blows the Node heap for no benefit.
+  // Column casing (esp. UNITID vs unitid) is inconsistent across tables/years,
+  // so resolve each requested name against the table's actual columns first.
+  let rows;
+  if (columns) {
+    const actualColumnNames = table.getColumnNames();
+    const resolvedColumns = columns.map((c) => {
+      const match = actualColumnNames.find((a) => a.toLowerCase() === c.toLowerCase());
+      if (!match) throw new Error(`column ${c} not found in table ${actualName}`);
+      return match;
+    });
+    rows = table.getData({ columns: resolvedColumns as any });
+  } else {
+    rows = table.getData();
+  }
   // IPEDS column casing (esp. UNITID vs unitid) is inconsistent across tables/years; normalize to uppercase.
   return rows.map((row: any) =>
     Object.fromEntries(Object.entries(row).map(([k, v]) => [k.toUpperCase(), v])),
@@ -355,6 +372,44 @@ async function loadYear(year: number) {
     console.log(`  financial_aid: ${aidRows.length}`);
   } else {
     console.log(`  financial_aid: skipped (no SFA${fiscalSuffix}_P1)`);
+  }
+
+  // --- completions_by_field (C{year}_A) — degrees by 6-digit CIP code and
+  // award level, first major only. Feeds academic-similarity; see
+  // .claude/skills/academic-similarity. Raw table also contains CIP-family
+  // (2-digit) and CIP-subfamily (4-digit) rollup rows and non-degree award
+  // levels (certificates, "total" pseudo-levels) — filter to real 6-digit
+  // codes and real degree levels only, or per-institution totals would be
+  // multiply counted.
+  const LEAF_AWARD_LEVELS = new Set([3, 5, 7, 17, 18, 19]); // Assoc, Bach, Mast, Doc-research/professional/other
+  const isSixDigitCip = (cip: unknown) => typeof cip === "string" && /^\d{2}\.\d{4}$/.test(cip);
+  const c = tableOrNull(reader, `C${year}_A`, ["UNITID", "CIPCODE", "MAJORNUM", "AWLEVEL", "CTOTALT"]);
+  if (c) {
+    const completionsByFieldRows = c
+      .filter(
+        (r: any) =>
+          r.MAJORNUM === 1 &&
+          LEAF_AWARD_LEVELS.has(r.AWLEVEL) &&
+          isSixDigitCip(r.CIPCODE) &&
+          r.CTOTALT > 0 &&
+          degreeGrantingUnitids.has(r.UNITID),
+      )
+      .map((r: any) => ({
+        unitid: r.UNITID,
+        year,
+        cipCode: r.CIPCODE,
+        awardLevel: r.AWLEVEL,
+        count: r.CTOTALT,
+      }));
+    await batchedUpsert(db, schema.completionsByField, completionsByFieldRows, [
+      "unitid",
+      "year",
+      "cipCode",
+      "awardLevel",
+    ]);
+    console.log(`  completions_by_field: ${completionsByFieldRows.length}`);
+  } else {
+    console.log(`  completions_by_field: skipped (no C${year}_A)`);
   }
 }
 
