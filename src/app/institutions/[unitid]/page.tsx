@@ -27,7 +27,9 @@ export default async function InstitutionPage({ params }: { params: Promise<{ un
   const controlLabel = institution.control ? CONTROL_LABELS[institution.control] ?? "—" : "—";
   const localeLabel = institution.locale ? (LOCALE_LABELS[institution.locale] ?? "—") : "—";
   const yieldRow = [...series.admissions].reverse().find((r) => r.yieldTotal != null);
-  const yieldPct = yieldRow?.yieldTotal != null ? `${Math.round(yieldRow.yieldTotal * 100)}%` : "—";
+  // yieldTotal is already stored as a whole-number percentage (47 meaning 47%),
+  // same convention as pct_admitted_total — do not multiply by 100 again.
+  const yieldPct = yieldRow?.yieldTotal != null ? `${Math.round(yieldRow.yieldTotal)}%` : "—";
 
   return (
     <div className="mx-auto w-full max-w-5xl px-6 py-12">
