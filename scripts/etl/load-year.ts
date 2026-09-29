@@ -11,7 +11,7 @@ import { drizzle } from "drizzle-orm/neon-http";
 import * as schema from "../../src/db/schema";
 import { batchedUpsert, cleanInt, cleanNum } from "./upsert";
 
-const CACHE_DIR = path.resolve("data/ipeds-cache");
+const CACHE_DIR = path.resolve("ipeds_data/ipeds-cache");
 
 function pad2(n: number) {
   return String(n % 100).padStart(2, "0");
