@@ -162,8 +162,14 @@ export default async function InstitutionPage({ params }: { params: Promise<{ un
             {
               key: "overall",
               label: "Overall profile",
+              // peer_network scores four dimensions, but tuition is listed here
+              // only when the current DEFAULT_YEAR actually has pricing data.
+              // IPEDS's provisional 2024-25 release omits the IC component
+              // entirely, so for 2024 the tuition term contributes zero to every
+              // pair and naming it here would overstate what the layout reflects.
+              // Restore it once pricing lands for the default year.
               description:
-                "Institutions of the same type, positioned by similarity across enrollment, admit rate, tuition, and instructional spending per student. Closer = more similar.",
+                "Institutions of the same type, positioned by similarity across enrollment, admit rate, and instructional spending per student. Closer = more similar.",
               peers: overallPeers.map((p) => ({ unitid: p.unitid, name: p.name, state: p.state, distance: p.distance })),
             },
             {

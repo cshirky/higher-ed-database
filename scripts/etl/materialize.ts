@@ -11,12 +11,18 @@ import { batchedUpsert } from "./upsert";
 
 const PEER_LIMIT = 12;
 // Must match DEFAULT_YEAR in src/db/queries.ts. peer_network and
-// academic_similarity are only computed for this one year, not every loaded
-// year — nothing in the app queries any other year for either, and storing
-// all 15 years for both previously blew Neon's free-tier 512MB project size
-// limit (see .claude/skills/precompute-over-live-query). nationwide_trends
-// stays full-history since /compare genuinely uses every year.
-const DEFAULT_YEAR = 2023;
+// academic_similarity are computed for this one year rather than every loaded
+// year, because nothing in the app queries any other year for either (see
+// .claude/skills/precompute-over-live-query). nationwide_trends stays
+// full-history since /compare genuinely uses every year.
+//
+// This used to be a hard constraint as well: all 15 years of both tables
+// exceeded Neon's free-tier 512MB project limit. That plan has since been
+// upgraded, so the limit no longer applies — widening this to more years is
+// now a cost/benefit call rather than something that will fail outright.
+//
+// Note these upserts never delete, so prior years' rows survive a bump here.
+const DEFAULT_YEAR = 2024;
 
 function stddev(values: number[]): number {
   const n = values.length;

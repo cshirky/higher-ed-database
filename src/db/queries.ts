@@ -18,7 +18,13 @@ import {
 
 // The most recent year we treat as "current" for browse/comparison views.
 // Time-series pages pull every year present regardless of this constant.
-export const DEFAULT_YEAR = 2023;
+//
+// 2024 is IPEDS's provisional 2024-25 release, which does not yet include the
+// IC (pricing) or SFA (financial aid) components — so there are no 2024 rows in
+// those two tables, and peer_network's tuition dimension drops out for this
+// year. Everything else has full 2024 coverage. Bumping this constant requires
+// re-running scripts/etl/materialize.ts, which must use the same value.
+export const DEFAULT_YEAR = 2024;
 
 export type InstitutionSearchParams = {
   q?: string;
