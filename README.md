@@ -2,23 +2,58 @@ This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-
 
 ## Getting Started
 
-First, run the development server:
+### 1. Install dependencies
+
+```bash
+npm install
+```
+
+### 2. Configure the database
+
+All data lives in a Neon Postgres database; nothing is read from disk at
+runtime. Copy the example env file and paste in your own connection string:
+
+```bash
+cp .env.example .env.local
+```
+
+`.env.local` is gitignored — don't commit the real credential, this repo is
+public.
+
+If the database is empty, create the schema with `npx drizzle-kit push`
+(there is no `drizzle/` migrations directory; the schema in
+`src/db/schema.ts` is pushed directly).
+
+### 3. Run the dev server
 
 ```bash
 npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+Open [http://localhost:3000](http://localhost:3000).
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+## Loading IPEDS data
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+`scripts/etl/load-year.ts` downloads the IPEDS zip for a given year straight
+from nces.ed.gov into `ipeds_data/ipeds-cache/` (gitignored, rebuilt on
+demand) and loads the Access database inside it.
+
+```bash
+npx tsx scripts/etl/load-year.ts 2010 2011 2012   # one or more years
+npx tsx scripts/etl/materialize.ts                # ALWAYS follows a backfill
+npx tsx scripts/etl/sanity-check.ts               # optional spot check
+```
+
+`materialize.ts` is not optional. It precomputes `nationwide_trends`,
+`peer_network`, and `academic_similarity`, which the app reads with plain
+indexed selects — they never update themselves, so skipping it leaves
+`/compare` and every peer network silently serving stale data. See
+`.claude/skills/precompute-over-live-query`.
+
+`load-year.ts` upserts but never deletes. If a change alters *which*
+institutions are in scope, run `npx tsx scripts/etl/truncate-all.ts` first,
+then backfill every year — otherwise orphaned rows survive. See
+`.claude/skills/institution-scope`.
 
 ## Learn More
 

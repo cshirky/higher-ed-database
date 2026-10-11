@@ -50,19 +50,25 @@ this question but don't, on their own:
   anywhere in this project's data, regardless of its `UGOFFER`/`GROFFER`
   values.
 
-### Known gap (found 2026-07-23, not yet fixed as of this writing)
+### Scope gate: fixed 2026-07-23 (commit 05febbb)
 
-The current ETL (`scripts/etl/load-year.ts`) derives `institution_type`
-from `UGOFFER`/`GROFFER` alone and does **not** filter on `DEGGRANT`. Spot
-check on 2010 data: of 5,306 institutions classified as "college," only
-2,313 actually had `HLOFFER` of Associate's or Bachelor's — the other
-~2,700+ were certificate-only vocational schools that should have been
-excluded entirely. If you are touching institution classification, fix this
-by filtering to `DEGGRANT = 1` before deriving `institution_type`, or by
-requiring `HLOFFER` to resolve to one of {3, 5, 7, 9} for at least the
-undergraduate or graduate side of the flag being set. Re-run the full
-backfill (`scripts/etl/load-year.ts` for all loaded years) after changing
-this, since it changes historical row counts, not just going-forward loads.
+`scripts/etl/load-year.ts` now gates on `DEGGRANT = 1`, building a
+`degreeGrantingUnitids` set from `HD{year}` and filtering **every** fact table
+through it, not just `institution_years`. `institutionType()` still reads
+`UGOFFER`/`GROFFER`, which is correct now that scope is gated first: those
+flags only decide *which* of the three categories a degree-granting
+institution lands in, never whether it's in scope at all.
+
+For context on why this mattered — the spot check that prompted the fix found
+that of 5,306 institutions previously classified as "college" in 2010 data,
+only 2,313 had an `HLOFFER` of Associate's or Bachelor's. The other ~2,700
+were certificate-only vocational schools being counted as colleges.
+
+Standing rule: a change to the scope gate alters historical row counts, not
+just going-forward loads. Truncate (`scripts/etl/truncate-all.ts`), re-run
+`load-year.ts` for every loaded year, then `materialize.ts` — `load-year.ts`
+upserts but never deletes, so a narrowed scope leaves orphaned rows behind
+otherwise.
 
 ## When this applies
 
