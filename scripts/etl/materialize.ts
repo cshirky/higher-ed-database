@@ -118,25 +118,57 @@ async function main() {
         from base
         group by institution_type
       ),
+      -- One squared z-difference per dimension, left NULL when either side does
+      -- not report it (or the cohort has no spread to normalize against) so that
+      -- "no data" stays distinguishable from "no difference" downstream.
       pairs as (
         select
           b1.unitid as unitid,
           b2.unitid as peer_unitid,
-          sqrt(
-            coalesce(power((b1.enrollment_total - b2.enrollment_total) / nullif(s.e_std, 0), 2), 0) +
-            coalesce(power((b1.admit_rate - b2.admit_rate) / nullif(s.a_std, 0), 2), 0) +
-            coalesce(power((b1.tuition - b2.tuition) / nullif(s.t_std, 0), 2), 0) +
-            coalesce(power((b1.instruction_expense - b2.instruction_expense) / nullif(s.x_std, 0), 2), 0)
-          ) as distance
+          power((b1.enrollment_total - b2.enrollment_total) / nullif(s.e_std, 0), 2) as d_enrollment,
+          power((b1.admit_rate - b2.admit_rate) / nullif(s.a_std, 0), 2) as d_admit,
+          power((b1.tuition - b2.tuition) / nullif(s.t_std, 0), 2) as d_tuition,
+          power((b1.instruction_expense - b2.instruction_expense) / nullif(s.x_std, 0), 2) as d_instruction
         from base b1
         join base b2 on b2.institution_type = b1.institution_type and b2.unitid != b1.unitid
         join stats s on s.institution_type = b1.institution_type
         where b1.enrollment_total is not null and b2.enrollment_total is not null
       ),
+      -- Root-mean-square over only the dimensions BOTH institutions report,
+      -- rather than summing with missing terms coalesced to zero. Summing
+      -- treated an absent dimension as a perfect match, so an institution
+      -- reporting only enrollment scored as identical on everything else and
+      -- surfaced as a close peer to anything of its size. Averaging instead
+      -- means a sparse pair is judged solely on what it actually shares, while
+      -- pairs sharing more dimensions are divided by a larger count — so a
+      -- well-evidenced match now outranks a match that is mostly absence.
+      -- Distances are consequently not comparable to values stored before this
+      -- change; the whole table is recomputed together, so that is internal.
+      scored as (
+        select
+          unitid,
+          peer_unitid,
+          sqrt(
+            (
+              coalesce(d_enrollment, 0) +
+              coalesce(d_admit, 0) +
+              coalesce(d_tuition, 0) +
+              coalesce(d_instruction, 0)
+            ) / nullif(
+              (case when d_enrollment is null then 0 else 1 end) +
+              (case when d_admit is null then 0 else 1 end) +
+              (case when d_tuition is null then 0 else 1 end) +
+              (case when d_instruction is null then 0 else 1 end),
+              0
+            )
+          ) as distance
+        from pairs
+      ),
       ranked as (
         select unitid, peer_unitid, distance,
           row_number() over (partition by unitid order by distance asc) as rank
-        from pairs
+        from scored
+        where distance is not null
       )
       select unitid, peer_unitid, distance, rank from ranked where rank <= ${PEER_LIMIT}
     `;
