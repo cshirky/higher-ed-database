@@ -93,19 +93,37 @@ async function main() {
   let totalPeerRows = 0;
   for (const year of [DEFAULT_YEAR]) {
     const peerRows = await sqlClient`
+      -- Each dimension falls back one year when the current year has no value,
+      -- then gives up: IPEDS provisional releases ship components piecemeal, so
+      -- the newest year routinely lacks a whole survey (2024-25 has no IC at
+      -- all, hence no pricing row for any institution) while the year before it
+      -- is complete. Without the fallback a whole dimension silently vanishes
+      -- from the comparison the moment DEFAULT_YEAR advances.
+      --
+      -- One year only, by design. A value two years stale is more misleading
+      -- than an absent one, and the scoring below already handles absence
+      -- correctly by averaging over just the dimensions a pair actually shares.
+      -- This is a current-snapshot view, which is what makes carry-forward
+      -- appropriate here; nationwide_trends is deliberately NOT treated this
+      -- way, since it charts one row per year and a carried-forward figure
+      -- would misreport that year.
       with base as (
         select
           iy.unitid,
           iy.institution_type,
-          e.total as enrollment_total,
-          a.pct_admitted_total as admit_rate,
-          p.tuition_fees_in_state as tuition,
-          f.instruction_expense_per_fte as instruction_expense
+          coalesce(e.total, e_prev.total) as enrollment_total,
+          coalesce(a.pct_admitted_total, a_prev.pct_admitted_total) as admit_rate,
+          coalesce(p.tuition_fees_in_state, p_prev.tuition_fees_in_state) as tuition,
+          coalesce(f.instruction_expense_per_fte, f_prev.instruction_expense_per_fte) as instruction_expense
         from institution_years iy
         left join enrollment e on e.unitid = iy.unitid and e.year = iy.year
+        left join enrollment e_prev on e_prev.unitid = iy.unitid and e_prev.year = iy.year - 1
         left join admissions a on a.unitid = iy.unitid and a.year = iy.year
+        left join admissions a_prev on a_prev.unitid = iy.unitid and a_prev.year = iy.year - 1
         left join pricing p on p.unitid = iy.unitid and p.year = iy.year
+        left join pricing p_prev on p_prev.unitid = iy.unitid and p_prev.year = iy.year - 1
         left join finance f on f.unitid = iy.unitid and f.year = iy.year
+        left join finance f_prev on f_prev.unitid = iy.unitid and f_prev.year = iy.year - 1
         where iy.year = ${year}
           and iy.institution_type in ('college', 'university', 'graduate_school')
       ),
