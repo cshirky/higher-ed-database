@@ -2,6 +2,14 @@ import { getNationwideTrends, type NationwideTrendRow } from "@/db/queries";
 import { INSTITUTION_TYPE_LABELS, INSTITUTION_TYPE_COLORS, type InstitutionType } from "@/lib/institution-types";
 import { TimeSeriesChart } from "@/components/time-series-chart";
 
+// This page is prerendered at build time, so without revalidation its numbers
+// stay frozen at whatever nationwide_trends held during the build — an ETL run
+// plus materialize.ts would not show up here until the next deploy. One hour is
+// well under the cadence at which IPEDS data actually changes (annually, via a
+// manual backfill); it just means a stale /compare self-corrects within the
+// hour instead of needing a redeploy. See .claude/skills/precompute-over-live-query.
+export const revalidate = 3600;
+
 const TYPES: Exclude<InstitutionType, "other">[] = ["college", "university", "graduate_school"];
 
 function pivot(rows: NationwideTrendRow[], valueKey: keyof NationwideTrendRow) {
