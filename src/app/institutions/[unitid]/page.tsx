@@ -1,10 +1,10 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import { getInstitution, getInstitutionTimeSeries, getPeers, getAcademicPeers, getTopAndBottomDegrees, DEFAULT_YEAR } from "@/db/queries";
+import { getInstitution, getInstitutionTimeSeries, getAcademicSimilarityScatter, getTopAndBottomDegrees, DEFAULT_YEAR } from "@/db/queries";
 import { INSTITUTION_TYPE_LABELS, CONTROL_LABELS, LOCALE_LABELS } from "@/lib/institution-types";
 import { CIP_PREFIX_LABELS } from "@/lib/cip-labels";
 import { TimeSeriesChart } from "@/components/time-series-chart";
-import { PeerNetwork } from "./peer-network";
+import { SimilarityScatter } from "@/components/similarity-scatter";
 
 function byYear<T extends { year: number }>(rows: T[]): Record<string, unknown>[] {
   return rows;
@@ -16,10 +16,11 @@ export default async function InstitutionPage({ params }: { params: Promise<{ un
   const institution = await getInstitution(unitid);
   if (!institution) notFound();
 
-  const [series, overallPeers, academicPeers, degrees] = await Promise.all([
+  const [series, similarityPoints, degrees] = await Promise.all([
     getInstitutionTimeSeries(unitid),
-    getPeers(unitid, DEFAULT_YEAR),
-    getAcademicPeers(unitid, DEFAULT_YEAR),
+    // 8 peers plus the target: enough to read a cluster, few enough that the
+    // marks stay separable at this chart size.
+    getAcademicSimilarityScatter(unitid, DEFAULT_YEAR, 8),
     getTopAndBottomDegrees(unitid, DEFAULT_YEAR),
   ]);
 
@@ -156,30 +157,7 @@ export default async function InstitutionPage({ params }: { params: Promise<{ un
       </div>
 
       <div className="mt-6">
-        <PeerNetwork
-          target={{ unitid: institution.unitid, name: institution.name, state: institution.state }}
-          modes={[
-            {
-              key: "overall",
-              label: "Overall profile",
-              // All four dimensions are live again: materialize.ts falls back one
-              // year per dimension, so 2024 scores tuition off 2023 pricing
-              // rather than dropping it (IPEDS's provisional 2024-25 release
-              // ships no IC component at all). Worth re-checking this wording if
-              // that fallback is ever narrowed.
-              description:
-                "Institutions of the same type, positioned by similarity across enrollment, admit rate, tuition, and instructional spending per student. Closer = more similar.",
-              peers: overallPeers.map((p) => ({ unitid: p.unitid, name: p.name, state: p.state, distance: p.distance })),
-            },
-            {
-              key: "academic",
-              label: "Academic programs",
-              description:
-                "Institutions of the same type, positioned by overlap in subjects and degree levels offered and by how many students earn those degrees. Closer = more similar academic offerings.",
-              peers: academicPeers.map((p) => ({ unitid: p.unitid, name: p.name, state: p.state, distance: p.distance })),
-            },
-          ]}
-        />
+        <SimilarityScatter points={similarityPoints} />
       </div>
     </div>
   );

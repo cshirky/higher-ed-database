@@ -1,4 +1,4 @@
-import { and, asc, desc, eq, ilike, sql } from "drizzle-orm";
+import { and, asc, desc, eq, ilike, inArray, sql } from "drizzle-orm";
 import { db } from "./index";
 import {
   institutionYears,
@@ -177,6 +177,82 @@ export async function getPeers(unitid: number, year = DEFAULT_YEAR, limit = 12) 
 export async function getAcademicPeers(unitid: number, year = DEFAULT_YEAR, limit = 12) {
   // Academic-program similarity — see .claude/skills/academic-similarity.
   return peersFromTable(academicSimilarity, unitid, year, limit);
+}
+
+export type SimilarityPoint = {
+  unitid: number;
+  name: string;
+  state: string | null;
+  /** Whole-number percentage (47 meaning 47%), same convention as pctAdmittedTotal. */
+  yieldTotal: number | null;
+  /** Whole-number percentage. */
+  gradRateTotal: number | null;
+  /** Academic-similarity distance from the target; null on the target itself. */
+  distance: number | null;
+  isTarget: boolean;
+};
+
+/**
+ * The target institution plus its nearest academic peers, carrying the two
+ * measures the similarity scatter plots. Peers come from `academic_similarity`
+ * (see .claude/skills/academic-similarity), which is restricted to the same
+ * institution_type — so every point on the chart is the same kind of
+ * institution as the target, and colouring by type would be monochrome.
+ *
+ * Points missing either measure are returned rather than filtered out, so the
+ * caller can say how many could not be plotted instead of dropping them
+ * silently.
+ */
+export async function getAcademicSimilarityScatter(
+  unitid: number,
+  year = DEFAULT_YEAR,
+  limit = 8,
+): Promise<SimilarityPoint[]> {
+  const peers = await db
+    .select({ peerUnitid: academicSimilarity.peerUnitid, distance: academicSimilarity.distance })
+    .from(academicSimilarity)
+    .where(and(eq(academicSimilarity.unitid, unitid), eq(academicSimilarity.year, year)))
+    .orderBy(asc(academicSimilarity.rank))
+    .limit(limit);
+
+  const distanceByUnitid = new Map(peers.map((p) => [p.peerUnitid, p.distance]));
+  const ids = [unitid, ...peers.map((p) => p.peerUnitid)];
+
+  const rows = await db
+    .select({
+      unitid: institutionYears.unitid,
+      name: institutionYears.name,
+      state: institutionYears.state,
+      yieldTotal: admissions.yieldTotal,
+      gradRateTotal: graduationRates.gradRateTotal,
+    })
+    .from(institutionYears)
+    .leftJoin(admissions, and(eq(admissions.unitid, institutionYears.unitid), eq(admissions.year, institutionYears.year)))
+    .leftJoin(
+      graduationRates,
+      and(eq(graduationRates.unitid, institutionYears.unitid), eq(graduationRates.year, institutionYears.year)),
+    )
+    .where(and(eq(institutionYears.year, year), inArray(institutionYears.unitid, ids)));
+
+  const byUnitid = new Map(rows.map((r) => [r.unitid, r]));
+
+  // Emit in similarity order with the target first, so the chart's own order
+  // matches the ranking rather than whatever order Postgres returned.
+  return ids
+    .map((id) => {
+      const row = byUnitid.get(id);
+      if (!row) return null;
+      return {
+        unitid: row.unitid,
+        name: row.name,
+        state: row.state,
+        yieldTotal: row.yieldTotal,
+        gradRateTotal: row.gradRateTotal,
+        distance: distanceByUnitid.get(id) ?? null,
+        isTarget: id === unitid,
+      };
+    })
+    .filter((p): p is SimilarityPoint => p !== null);
 }
 
 export async function getTopAndBottomDegrees(unitid: number, year = DEFAULT_YEAR) {
