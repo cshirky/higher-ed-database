@@ -32,13 +32,15 @@ function seriesFor(label: (t: string) => string) {
 export default async function ComparePage() {
   const trends = await getNationwideTrends();
   const typeLabel = (t: string) => INSTITUTION_TYPE_LABELS[t as InstitutionType] ?? t;
+  const years = trends.map((r) => r.year);
+  const yearRange = years.length > 0 ? `${Math.min(...years)}–${Math.max(...years)}` : null;
 
   return (
     <div className="mx-auto w-full max-w-5xl px-6 py-12">
       <h1 className="text-2xl font-semibold tracking-tight">Nationwide comparison</h1>
       <p className="mt-1 text-sm text-[var(--text-secondary)]">
-        Colleges, universities, and graduate schools, aggregated across every U.S. institution reporting to IPEDS,
-        2010–2024.
+        Colleges, universities, and graduate schools, aggregated across every U.S. institution reporting to IPEDS
+        {yearRange && `, ${yearRange}`}.
       </p>
 
       <div className="mt-4 flex gap-4 text-sm">

@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { searchInstitutions, getStateList } from "@/db/queries";
+import { searchInstitutions, getStateList, DEFAULT_YEAR, academicYearLabel } from "@/db/queries";
 import { INSTITUTION_TYPE_LABELS, INSTITUTION_TYPES } from "@/lib/institution-types";
 
 export default async function InstitutionsPage({
@@ -33,7 +33,7 @@ export default async function InstitutionsPage({
     <div className="mx-auto w-full max-w-5xl px-6 py-12">
       <h1 className="text-2xl font-semibold tracking-tight">Institutions</h1>
       <p className="mt-1 text-sm text-[var(--text-secondary)]">
-        {total.toLocaleString()} institutions · academic year 2023-24
+        {total.toLocaleString()} institutions · academic year {academicYearLabel(DEFAULT_YEAR)}
       </p>
 
       <form className="mt-6 flex flex-wrap gap-3" action="/institutions">

@@ -70,9 +70,17 @@ function axisBounds(values: number[]): [number, number] {
   return [lo, hi];
 }
 
+/**
+ * Ticks on round multiples of 10 (20 once the window is wide enough to crowd
+ * them). A fixed count instead divides the window into fractional steps — a
+ * 40–90 window in four gives 52.5, 65, 77.5 — whose rounded labels then sit
+ * off their own gridlines.
+ */
 function ticksFor([lo, hi]: [number, number]): number[] {
-  const step = (hi - lo) / 4;
-  return [0, 1, 2, 3, 4].map((i) => Math.round(lo + i * step));
+  const step = hi - lo > 60 ? 20 : 10;
+  const ticks: number[] = [];
+  for (let t = Math.ceil(lo / step) * step; t <= hi; t += step) ticks.push(t);
+  return ticks;
 }
 
 function Tip({ active, payload }: { active?: boolean; payload?: { payload: Datum }[] }) {

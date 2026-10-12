@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import { getInstitution, getInstitutionTimeSeries, getAcademicSimilarityScatter, getTopAndBottomDegrees, DEFAULT_YEAR } from "@/db/queries";
+import { getInstitution, getInstitutionTimeSeries, getAcademicSimilarityScatter, getTopDegrees, DEFAULT_YEAR } from "@/db/queries";
 import { INSTITUTION_TYPE_LABELS, CONTROL_LABELS, LOCALE_LABELS } from "@/lib/institution-types";
 import { CIP_PREFIX_LABELS } from "@/lib/cip-labels";
 import { TimeSeriesChart } from "@/components/time-series-chart";
@@ -16,12 +16,12 @@ export default async function InstitutionPage({ params }: { params: Promise<{ un
   const institution = await getInstitution(unitid);
   if (!institution) notFound();
 
-  const [series, similarityPoints, degrees] = await Promise.all([
+  const [series, similarityPoints, topDegrees] = await Promise.all([
     getInstitutionTimeSeries(unitid),
     // 8 peers plus the target: enough to read a cluster, few enough that the
     // marks stay separable at this chart size.
     getAcademicSimilarityScatter(unitid, DEFAULT_YEAR, 8),
-    getTopAndBottomDegrees(unitid, DEFAULT_YEAR),
+    getTopDegrees(unitid, DEFAULT_YEAR),
   ]);
 
   const typeLabel = INSTITUTION_TYPE_LABELS[institution.institutionType as keyof typeof INSTITUTION_TYPE_LABELS] ?? institution.institutionType;
@@ -53,10 +53,10 @@ export default async function InstitutionPage({ params }: { params: Promise<{ un
             <p className="text-xs font-medium uppercase tracking-wide text-[var(--text-muted)]">Yield</p>
             <p className="mt-1 text-sm font-medium">{yieldPct}</p>
           </div>
-          <div className="col-span-2 sm:col-span-1">
+          <div className="col-span-2">
             <p className="text-xs font-medium uppercase tracking-wide text-[var(--text-muted)]">Most Popular Degrees</p>
             <ol className="mt-1 space-y-0.5">
-              {degrees.top5.map((d, i) => (
+              {topDegrees.map((d, i) => (
                 <li key={d.prefix} className="flex items-baseline justify-between gap-2 text-sm">
                   <span className="text-[var(--text-secondary)]">
                     {i + 1}. {CIP_PREFIX_LABELS[d.prefix] ?? `CIP ${d.prefix}`}
@@ -64,21 +64,7 @@ export default async function InstitutionPage({ params }: { params: Promise<{ un
                   <span className="shrink-0 tabular-nums text-[var(--text-muted)]">{d.total.toLocaleString()}</span>
                 </li>
               ))}
-              {degrees.top5.length === 0 && <li className="text-sm text-[var(--text-muted)]">—</li>}
-            </ol>
-          </div>
-          <div className="col-span-2 sm:col-span-1">
-            <p className="text-xs font-medium uppercase tracking-wide text-[var(--text-muted)]">Least Common Degrees</p>
-            <ol className="mt-1 space-y-0.5">
-              {degrees.bottom5.map((d) => (
-                <li key={d.prefix} className="flex items-baseline justify-between gap-2 text-sm">
-                  <span className="text-[var(--text-secondary)]">
-                    {CIP_PREFIX_LABELS[d.prefix] ?? `CIP ${d.prefix}`}
-                  </span>
-                  <span className="shrink-0 tabular-nums text-[var(--text-muted)]">{d.total.toLocaleString()}</span>
-                </li>
-              ))}
-              {degrees.bottom5.length === 0 && <li className="text-sm text-[var(--text-muted)]">—</li>}
+              {topDegrees.length === 0 && <li className="text-sm text-[var(--text-muted)]">—</li>}
             </ol>
           </div>
         </div>

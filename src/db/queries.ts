@@ -26,6 +26,11 @@ import {
 // re-running scripts/etl/materialize.ts, which must use the same value.
 export const DEFAULT_YEAR = 2024;
 
+/** "2024-25" for 2024: `year` is the fall year of the collection cycle. */
+export function academicYearLabel(year: number) {
+  return `${year}-${String((year + 1) % 100).padStart(2, "0")}`;
+}
+
 export type InstitutionSearchParams = {
   q?: string;
   state?: string;
@@ -255,20 +260,19 @@ export async function getAcademicSimilarityScatter(
     .filter((p): p is SimilarityPoint => p !== null);
 }
 
-export async function getTopAndBottomDegrees(unitid: number, year = DEFAULT_YEAR) {
-  const rows = await db
+export async function getTopDegrees(unitid: number, year = DEFAULT_YEAR, limit = 5) {
+  return db
     .select({
       prefix: sql<string>`LEFT(${completionsByField.cipCode}, 2)`,
-      total: sql<number>`SUM(${completionsByField.count})`,
+      // SUM(integer) is bigint, which the driver hands back as a string; cast
+      // so the count is a real number the page can format.
+      total: sql<number>`SUM(${completionsByField.count})::int`,
     })
     .from(completionsByField)
     .where(and(eq(completionsByField.unitid, unitid), eq(completionsByField.year, year)))
     .groupBy(sql`LEFT(${completionsByField.cipCode}, 2)`)
     .having(sql`SUM(${completionsByField.count}) > 0`)
-    .orderBy(sql`SUM(${completionsByField.count}) DESC`);
-
-  return {
-    top5: rows.slice(0, 5),
-    bottom5: [...rows].slice(-5).reverse(),
-  };
+    // Prefix as tiebreak so equal counts keep one order between requests.
+    .orderBy(sql`SUM(${completionsByField.count}) DESC`, sql`LEFT(${completionsByField.cipCode}, 2)`)
+    .limit(limit);
 }

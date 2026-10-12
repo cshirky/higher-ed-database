@@ -18,8 +18,9 @@ type FormatKind = "number" | "percent" | "currency" | "currencyM" | "compact";
 const FORMATTERS: Record<FormatKind, (v: number) => string> = {
   number: (v) => v.toLocaleString(),
   percent: (v) => `${v.toFixed(0)}%`,
-  currency: (v) => `$${v.toLocaleString()}`,
-  currencyM: (v) => `$${(v / 1_000_000).toFixed(0)}M`,
+  currency: (v) => `$${v.toLocaleString(undefined, { maximumFractionDigits: 0 })}`,
+  // One decimal below $10M, so a small institution's budget does not read as "$0M".
+  currencyM: (v) => `$${(v / 1_000_000).toFixed(v !== 0 && Math.abs(v) < 10_000_000 ? 1 : 0)}M`,
   compact: (v) => Intl.NumberFormat("en-US", { notation: "compact" }).format(v),
 };
 
