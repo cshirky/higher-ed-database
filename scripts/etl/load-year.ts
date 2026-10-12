@@ -88,8 +88,28 @@ function tableOrNull(reader: MDBReader, name: string, columns?: string[]) {
   }
   // IPEDS column casing (esp. UNITID vs unitid) is inconsistent across tables/years; normalize to uppercase.
   return rows.map((row: any) =>
-    Object.fromEntries(Object.entries(row).map(([k, v]) => [k.toUpperCase(), v])),
+    strictRow(Object.fromEntries(Object.entries(row).map(([k, v]) => [k.toUpperCase(), v])), actualName),
   );
+}
+
+// Reading a column the table does not have throws instead of yielding
+// undefined. A misspelt or wrongly-cased name (r.EnrFt against the upper-cased
+// key ENRFT) otherwise loads as NULL in every row and nothing complains.
+// Columns that genuinely come and go between years are read with opt().
+function strictRow(row: Record<string, unknown>, tableName: string) {
+  return new Proxy(row, {
+    get(target, prop, receiver) {
+      if (typeof prop === "string" && !(prop in target)) {
+        throw new Error(`column ${prop} not found in table ${tableName}`);
+      }
+      return Reflect.get(target, prop, receiver);
+    },
+  });
+}
+
+/** Reads a column that only exists in some years' releases; null where it is absent. */
+function opt(row: any, column: string) {
+  return column in row ? row[column] : null;
 }
 
 function institutionType(ugOffer: number | null, grOffer: number | null): string {
@@ -145,7 +165,7 @@ async function loadYear(year: number) {
         grOffer,
         highestOffering: cleanInt(r.HLOFFER),
         institutionType: institutionType(ugOffer, grOffer),
-        carnegieClassification: cleanInt(r.CARNEGIE),
+        carnegieClassification: cleanInt(opt(r, "CARNEGIE")),
         longitude: r.LONGITUD ?? null,
         latitude: r.LATITUDE ?? null,
       };
@@ -159,7 +179,7 @@ async function loadYear(year: number) {
   const drvadmByUnitid = new Map<number, any>((drvadm ?? []).map((r: any) => [r.UNITID, r]));
   if (adm) {
     const admissionsRows = adm
-      .filter((r: any) => r.APPLCN !== undefined && degreeGrantingUnitids.has(r.UNITID))
+      .filter((r: any) => "APPLCN" in r && degreeGrantingUnitids.has(r.UNITID))
       .map((r: any) => {
         const derived = drvadmByUnitid.get(r.UNITID);
         return {
@@ -177,13 +197,13 @@ async function loadYear(year: number) {
           pctAdmittedTotal: derived ? cleanNum(derived.DVADM01) : null,
           yieldTotal: derived ? cleanNum(derived.DVADM04) : null,
           satReading25: cleanInt(r.SATVR25),
-          satReading50: cleanInt(r.SATVR50),
+          satReading50: cleanInt(opt(r, "SATVR50")),
           satReading75: cleanInt(r.SATVR75),
           satMath25: cleanInt(r.SATMT25),
-          satMath50: cleanInt(r.SATMT50),
+          satMath50: cleanInt(opt(r, "SATMT50")),
           satMath75: cleanInt(r.SATMT75),
           actComposite25: cleanInt(r.ACTCM25),
-          actComposite50: cleanInt(r.ACTCM50),
+          actComposite50: cleanInt(opt(r, "ACTCM50")),
           actComposite75: cleanInt(r.ACTCM75),
         };
       });
@@ -203,21 +223,21 @@ async function loadYear(year: number) {
       year,
       total: cleanInt(r.ENRTOT),
       fte: cleanInt(r.FTE),
-      fullTime: cleanInt(r.EnrFt),
-      partTime: cleanInt(r.EnrPt),
+      fullTime: cleanInt(r.ENRFT),
+      partTime: cleanInt(r.ENRPT),
       undergradTotal: cleanInt(r.EFUG),
       gradTotal: cleanInt(r.EFGRAD),
       pctWomen: cleanNum(r.PCTENRW),
-      pctWhite: cleanNum(r.PctEnrWh),
-      pctBlack: cleanNum(r.PctEnrBK),
-      pctHispanic: cleanNum(r.PctEnrHS),
+      pctWhite: cleanNum(r.PCTENRWH),
+      pctBlack: cleanNum(r.PCTENRBK),
+      pctHispanic: cleanNum(r.PCTENRHS),
       pctAsian: cleanNum(r.PCTENRAS),
-      pctAmIndianAkNative: cleanNum(r.PctEnrAN),
+      pctAmIndianAkNative: cleanNum(r.PCTENRAN),
       pctNativeHawaiianPacific: cleanNum(r.PCTENRNH),
       pctTwoOrMoreRaces: cleanNum(r.PCTENR2M),
-      pctRaceUnknown: cleanNum(r.PctEnrUn),
-      pctNonresident: cleanNum(r.PctEnrNr),
-      pctExclusivelyDistanceEd: cleanNum(r.PCTDEEXC),
+      pctRaceUnknown: cleanNum(r.PCTENRUN),
+      pctNonresident: cleanNum(r.PCTENRNR),
+      pctExclusivelyDistanceEd: cleanNum(opt(r, "PCTDEEXC")),
     }));
     await batchedUpsert(db, schema.enrollment, enrollmentRows, ["unitid", "year"]);
     console.log(`  enrollment: ${enrollmentRows.length}`);
@@ -265,13 +285,13 @@ async function loadYear(year: number) {
       gradRateWhite: cleanNum(r.GRRTWH),
       gradRateBlack: cleanNum(r.GRRTBK),
       gradRateHispanic: cleanNum(r.GRRTHS),
-      gradRateAsian: cleanNum(r.GRRTAS),
+      gradRateAsian: cleanNum(opt(r, "GRRTAS")),
       transferOutRateTotal: cleanNum(r.TRRTTOT),
       bachelor4yrRateTotal: cleanNum(r.GBA4RTT),
       bachelor5yrRateTotal: cleanNum(r.GBA5RTT),
       bachelor6yrRateTotal: cleanNum(r.GBA6RTT),
-      pellGradRateTotal: cleanNum(r.PGGRRTT),
-      pellBachelor6yrRate: cleanNum(r.PGBA6RT),
+      pellGradRateTotal: cleanNum(opt(r, "PGGRRTT")),
+      pellBachelor6yrRate: cleanNum(opt(r, "PGBA6RT")),
     }));
     await batchedUpsert(db, schema.graduationRates, gradRows, ["unitid", "year"]);
     console.log(`  graduation_rates: ${gradRows.length}`);
@@ -340,13 +360,13 @@ async function loadYear(year: number) {
       unitid: r.UNITID,
       year,
       avgSalaryAllRanks: cleanInt(r.SALTOTL),
-      avgSalaryProfessor: cleanInt(r.SalProf),
-      avgSalaryAssocProfessor: cleanInt(r.SalAssc),
-      avgSalaryAsstProfessor: cleanInt(r.SalAsst),
-      fteInstructional: cleanNum(r.SFTEINST),
-      fteResearch: cleanNum(r.SFTERSRC),
-      ftePublicService: cleanNum(r.SFTEPBSV),
-      fteTotalStaff: cleanNum(r.SFTETOTL),
+      avgSalaryProfessor: cleanInt(r.SALPROF),
+      avgSalaryAssocProfessor: cleanInt(r.SALASSC),
+      avgSalaryAsstProfessor: cleanInt(r.SALASST),
+      fteInstructional: cleanNum(opt(r, "SFTEINST")),
+      fteResearch: cleanNum(opt(r, "SFTERSRC")),
+      ftePublicService: cleanNum(opt(r, "SFTEPBSV")),
+      fteTotalStaff: cleanNum(opt(r, "SFTETOTL")),
     }));
     await batchedUpsert(db, schema.faculty, facultyRows, ["unitid", "year"]);
     console.log(`  faculty: ${facultyRows.length}`);
@@ -364,8 +384,8 @@ async function loadYear(year: number) {
         unitid: r.UNITID,
         year,
         numTotalStudents: cleanInt(r.SCUGRAD),
-        numAwardedAnyGrant: cleanInt(r.ANYAIDN),
-        pctAwardedAnyGrant: cleanNum(r.ANYAIDP),
+        numAwardedAnyAid: cleanInt(r.ANYAIDN),
+        pctAwardedAnyAid: cleanNum(r.ANYAIDP),
         avgGrantAidAmount: cleanInt(r.AGRNT_A),
       }));
     await batchedUpsert(db, schema.financialAid, aidRows, ["unitid", "year"]);

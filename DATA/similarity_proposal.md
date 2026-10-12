@@ -132,7 +132,7 @@ basis" below) before combining.
 
 **Price & aid** (`pricing`, `financial_aid`)
 - `tuitionFeesInState`, `inStateTotalOnCampus`, `outStateTotalOnCampus`
-- `pctAwardedAnyGrant`, `avgGrantAidAmount`
+- `pctAwardedAnyAid`, `avgGrantAidAmount`
 
 **Finance & faculty** (`finance`, `faculty`)
 - `tuitionRevenuePerFte`, `instructionExpensePerFte`,
@@ -408,7 +408,7 @@ this does not later read as a violation.
 4. **Scope and field set** -- bachelor's-granting with a reported admit rate
    (1,718 institutions for 2024). v1 fields: enrollment and undergrad total;
    admit rate, yield, one test composite; tuition, total cost on campus,
-   percent awarded grant aid, average grant; bachelor 6yr rate, grad rate, Pell
+   percent awarded any aid, average grant; bachelor 6yr rate, grad rate, Pell
    grad rate; locale as 1-12 urbanicity; instruction spend per FTE and
    student-faculty ratio. Identity flags reduce to control, HBCU and tribal.
    Dropped from v1: transfer-out rate (64% coverage, not a comparison families

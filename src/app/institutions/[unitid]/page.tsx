@@ -149,9 +149,9 @@ export default async function InstitutionPage({ params }: { params: Promise<{ un
           format="currencyM"
         />
         <TimeSeriesChart
-          title="Financial aid: % receiving any grant"
+          title="Financial aid: % receiving any aid"
           data={byYear(series.financialAid)}
-          series={[{ key: "pctAwardedAnyGrant", label: "% receiving grant aid" }]}
+          series={[{ key: "pctAwardedAnyAid", label: "% receiving any aid" }]}
           format="percent"
         />
       </div>

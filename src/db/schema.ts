@@ -223,9 +223,9 @@ export const financialAid = pgTable(
   {
     unitid: integer("unitid").notNull(),
     year: smallint("year").notNull(),
-    numAwardedAnyGrant: bigint("num_awarded_any_grant", { mode: "number" }),
+    numAwardedAnyAid: bigint("num_awarded_any_aid", { mode: "number" }),
     numTotalStudents: bigint("num_total_students", { mode: "number" }),
-    pctAwardedAnyGrant: doublePrecision("pct_awarded_any_grant"),
+    pctAwardedAnyAid: doublePrecision("pct_awarded_any_aid"),
     avgGrantAidAmount: bigint("avg_grant_aid_amount", { mode: "number" }),
   },
   (t) => [
