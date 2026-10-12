@@ -74,6 +74,8 @@ and rename the columns and chart title to "any aid". Requires a re-load of
 
 ### A3. Browse page says "academic year 2023-24" but shows 2024-25 — confirmed
 
+> **Fixed 2026-10-12.** Both labels are now derived (`academicYearLabel(DEFAULT_YEAR)`; min/max year of the trend rows).
+
 `src/app/institutions/page.tsx:36` hardcodes the label; the query underneath
 uses `DEFAULT_YEAR = 2024`, which `queries.ts:22` itself describes as the
 2024-25 release.
@@ -85,6 +87,8 @@ min/max year.
 
 ### A4. Degree counts render without thousands separators — confirmed
 
+> **Fixed 2026-10-12** with `SUM(...)::int`.
+
 `getTopAndBottomDegrees` types `SUM(count)` as `sql<number>`
 (`src/db/queries.ts:262`), but Postgres `SUM(integer)` is `bigint` and the
 Neon HTTP driver returns it as a **string** (`"1520"`). The page then calls
@@ -94,6 +98,8 @@ a no-op, so large counts show as `1520` rather than `1,520`.
 **Fix:** `sql<number>\`SUM(...)::int\`` (or `.mapWith(Number)`).
 
 ### A5. "Most Popular" and "Least Common" degrees show the same rows for most small institutions — confirmed
+
+> **Resolved 2026-10-12** by removing the "Least Common" panel entirely; the query is now `getTopDegrees`, with the tiebreak. The "Degrees" vs "fields" wording is unchanged.
 
 `queries.ts:270-273` takes the first five and last five of one list with no
 check for overlap. In 2024, 1,772 of 3,905 institutions have fewer than ten
@@ -109,6 +115,8 @@ areas summed over all award levels — "Most popular fields" would be accurate.
 
 ### A6. Similarity scatter can draw uneven, non-round axis ticks — by reading
 
+> **Fixed 2026-10-12.** Ticks fall on multiples of 10, or 20 when the window is wider than 60 points.
+
 `ticksFor()` (`src/components/similarity-scatter.tsx:73-76`) always makes five
 ticks, so the step is `span / 4`. `axisBounds()` returns spans that are
 multiples of 10 and ≥ 40, so spans of 50, 70 or 90 give fractional steps that
@@ -120,6 +128,8 @@ exactly five ticks.
 
 ### A7. Currency tooltips on /compare show three decimals — by reading
 
+> **Fixed 2026-10-12.** Whole dollars; millions get one decimal below $10M.
+
 `FORMATTERS.currency` is `` `$${v.toLocaleString()}` ``
 (`src/components/time-series-chart.tsx:21`). On `/compare` the values are
 averages (`avg_tuition` = 10647.682461538461), so the tooltip reads
@@ -130,6 +140,8 @@ Similarly `currencyM` (`:22`) rounds anything under $500k to `$0M` — use one
 decimal below $10M.
 
 ### A8. Materialized tables keep stale rows forever — confirmed
+
+> **Partly addressed 2026-10-12:** the stale rows were cleared by hand during the for-profit cleanup. `materialize.ts` itself still only upserts, so they will accumulate again.
 
 `materialize.ts` only upserts. Consequences visible now:
 
@@ -146,6 +158,8 @@ entirely, and the target year's rows of `peer_network` /
 2023 `academic_similarity` rows would go with it.)
 
 ### A9. `truncate-all.ts` doesn't truncate everything — by reading
+
+> **Table list fixed 2026-10-12.** The missing confirmation prompt and `.catch` are still open.
 
 `scripts/etl/truncate-all.ts:7-17` omits `completions_by_field`,
 `nationwide_trends`, `peer_network` and `academic_similarity`. The README and
@@ -311,6 +325,8 @@ lookups; the extra indexes only cost write time. **Fix:** remove both from
 the schema.
 
 ### C8. Stored data nobody reads
+
+> **2026-10-12:** the seven undeclared tables were dropped. `graduation_rates` still has eight columns that `schema.ts` does not define.
 
 - The `faculty` table (67,178 rows, 10 MB) is loaded every run and read by
   nothing except the wasted fetch in C3.
