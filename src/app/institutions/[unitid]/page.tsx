@@ -18,8 +18,8 @@ export default async function InstitutionPage({ params }: { params: Promise<{ un
 
   const [series, similarityPoints, topDegrees] = await Promise.all([
     getInstitutionTimeSeries(unitid),
-    // All 12 stored peers: the chart then drops the ones well below this
-    // institution on either axis, which typically leaves five or six.
+    // The 12 nearest academic peers that are not well below this institution
+    // on either axis.
     getAcademicSimilarityScatter(unitid, DEFAULT_YEAR, 12),
     getTopDegrees(unitid, DEFAULT_YEAR),
   ]);

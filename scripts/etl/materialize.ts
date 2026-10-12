@@ -10,6 +10,11 @@ import * as schema from "../../src/db/schema";
 import { batchedUpsert } from "./upsert";
 
 const PEER_LIMIT = 12;
+// academic_similarity is stored deeper than it is shown: the peer scatter
+// keeps only peers that are not well below the target on yield or graduation
+// rate, then takes the nearest 12 of those (getAcademicSimilarityScatter), so
+// it needs a pool to select from. 60 lets most institutions fill all 12.
+const ACADEMIC_PEER_LIMIT = 60;
 // Must match DEFAULT_YEAR in src/db/queries.ts. peer_network and
 // academic_similarity are computed for this one year rather than every loaded
 // year, because nothing in the app queries any other year for either (see
@@ -302,8 +307,8 @@ async function main() {
 
           const distance = Math.sqrt(compositionDistance ** 2 + sizeDistance ** 2);
 
-          insertTopK(candidates.get(a)!, { peerUnitid: b, distance }, PEER_LIMIT);
-          insertTopK(candidates.get(b)!, { peerUnitid: a, distance }, PEER_LIMIT);
+          insertTopK(candidates.get(a)!, { peerUnitid: b, distance }, ACADEMIC_PEER_LIMIT);
+          insertTopK(candidates.get(b)!, { peerUnitid: a, distance }, ACADEMIC_PEER_LIMIT);
         }
       }
 

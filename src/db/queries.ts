@@ -189,6 +189,8 @@ export type SimilarityPoint = {
   unitid: number;
   name: string;
   state: string | null;
+  /** IPEDS CONTROL: 1 public, 2 private nonprofit. */
+  control: number | null;
   /** Whole-number percentage (47 meaning 47%), same convention as pctAdmittedTotal. */
   yieldTotal: number | null;
   /** Whole-number percentage. */
@@ -198,12 +200,16 @@ export type SimilarityPoint = {
   /** Test score on the SAT's 400–1600 scale — see src/lib/selectivity.ts. */
   satIndex: number | null;
   undergradTotal: number | null;
+  totalEnrollment: number | null;
   /** Published annual cost of attendance in dollars — see `costOfAttendance` below. */
   costOfAttendance: number | null;
-  /** Academic-similarity distance from the target; null on the target itself. */
-  distance: number | null;
+  /** Academic-similarity rank among all stored peers; null on the target itself. */
+  rank: number | null;
   isTarget: boolean;
 };
+
+/** A peer this many points or more below the target on yield or graduation rate is not selected. */
+export const PEER_FLOOR_POINTS = 10;
 
 const mean = (values: (number | null)[]) => {
   const present = values.filter((v): v is number => v != null);
@@ -226,16 +232,22 @@ function costOfAttendance(p: typeof pricing.$inferSelect): number | null {
 }
 
 /**
- * The target institution plus its nearest academic peers, carrying the
- * measures the similarity scatter encodes. Peers come from
- * `academic_similarity` (see .claude/skills/academic-similarity), which is
- * restricted to the same institution_type — so every point on the chart is the
- * same kind of institution as the target, and colouring by type would be
- * monochrome.
+ * The target institution plus the `limit` nearest academic peers worth
+ * comparing it against, carrying the measures the similarity scatter encodes.
+ * Peers come from `academic_similarity` (see .claude/skills/academic-similarity),
+ * which is restricted to the same institution_type.
  *
- * Points missing a measure are returned rather than filtered out, so the
- * caller can say how many could not be plotted instead of dropping them
- * silently.
+ * The selection is deliberately one-sided: the chart exists to surface
+ * comparable-or-better institutions, so a peer PEER_FLOOR_POINTS or more below
+ * the target on yield or on graduation rate is passed over, as is one that
+ * reports neither and so could not be placed. The table stores more peers per
+ * institution than `limit` for exactly this reason (ACADEMIC_PEER_LIMIT in
+ * scripts/etl/materialize.ts); the result can still fall short when a target
+ * outperforms most of its stored peers.
+ *
+ * When the target itself reports no yield or graduation rate there is nothing
+ * to compare against, and the nearest `limit` peers are returned unfiltered
+ * for the caller's table.
  */
 export async function getAcademicSimilarityScatter(
   unitid: number,
@@ -243,13 +255,12 @@ export async function getAcademicSimilarityScatter(
   limit = 12,
 ): Promise<SimilarityPoint[]> {
   const peers = await db
-    .select({ peerUnitid: academicSimilarity.peerUnitid, distance: academicSimilarity.distance })
+    .select({ peerUnitid: academicSimilarity.peerUnitid, rank: academicSimilarity.rank })
     .from(academicSimilarity)
     .where(and(eq(academicSimilarity.unitid, unitid), eq(academicSimilarity.year, year)))
-    .orderBy(asc(academicSimilarity.rank))
-    .limit(limit);
+    .orderBy(asc(academicSimilarity.rank));
 
-  const distanceByUnitid = new Map(peers.map((p) => [p.peerUnitid, p.distance]));
+  const rankByUnitid = new Map(peers.map((p) => [p.peerUnitid, p.rank]));
   const ids = [unitid, ...peers.map((p) => p.peerUnitid)];
 
   const [rows, pricingRows] = await Promise.all([
@@ -258,8 +269,10 @@ export async function getAcademicSimilarityScatter(
         unitid: institutionYears.unitid,
         name: institutionYears.name,
         state: institutionYears.state,
+        control: institutionYears.control,
         gradRateTotal: graduationRates.gradRateTotal,
         undergradTotal: enrollment.undergradTotal,
+        totalEnrollment: enrollment.total,
         admissions,
       })
       .from(institutionYears)
@@ -289,9 +302,9 @@ export async function getAcademicSimilarityScatter(
     if (cost != null) costByUnitid.set(p.unitid, cost);
   }
 
-  // Emit in similarity order with the target first, so the chart's own order
+  // In similarity order with the target first, so the chart's own order
   // matches the ranking rather than whatever order Postgres returned.
-  return ids
+  const points = ids
     .map((id) => {
       const row = byUnitid.get(id);
       if (!row) return null;
@@ -299,17 +312,34 @@ export async function getAcademicSimilarityScatter(
         unitid: row.unitid,
         name: row.name,
         state: row.state,
+        control: row.control,
         yieldTotal: row.admissions?.yieldTotal ?? null,
         gradRateTotal: row.gradRateTotal,
         admitRate: row.admissions?.pctAdmittedTotal ?? null,
         satIndex: row.admissions ? satIndex(row.admissions) : null,
         undergradTotal: row.undergradTotal,
+        totalEnrollment: row.totalEnrollment,
         costOfAttendance: costByUnitid.get(id) ?? null,
-        distance: distanceByUnitid.get(id) ?? null,
+        rank: rankByUnitid.get(id) ?? null,
         isTarget: id === unitid,
       };
     })
     .filter((p): p is SimilarityPoint => p !== null);
+
+  const target = points.find((p) => p.isTarget);
+  if (!target) return [];
+  const others = points.filter((p) => !p.isTarget);
+  const { yieldTotal: targetYield, gradRateTotal: targetGradRate } = target;
+  if (targetYield == null || targetGradRate == null) return [target, ...others.slice(0, limit)];
+
+  const selected = others.filter(
+    (p) =>
+      p.yieldTotal != null &&
+      p.gradRateTotal != null &&
+      p.yieldTotal > targetYield - PEER_FLOOR_POINTS &&
+      p.gradRateTotal > targetGradRate - PEER_FLOOR_POINTS,
+  );
+  return [target, ...selected.slice(0, limit)];
 }
 
 export async function getTopDegrees(unitid: number, year = DEFAULT_YEAR, limit = 5) {
