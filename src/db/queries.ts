@@ -1,5 +1,6 @@
 import { and, asc, desc, eq, ilike, inArray, sql } from "drizzle-orm";
 import { db } from "./index";
+import { satIndex } from "@/lib/selectivity";
 import {
   institutionYears,
   admissions,
@@ -192,26 +193,54 @@ export type SimilarityPoint = {
   yieldTotal: number | null;
   /** Whole-number percentage. */
   gradRateTotal: number | null;
+  /** Whole-number percentage of applicants admitted. */
+  admitRate: number | null;
+  /** Test score on the SAT's 400–1600 scale — see src/lib/selectivity.ts. */
+  satIndex: number | null;
+  undergradTotal: number | null;
+  /** Published annual cost of attendance in dollars — see `costOfAttendance` below. */
+  costOfAttendance: number | null;
   /** Academic-similarity distance from the target; null on the target itself. */
   distance: number | null;
   isTarget: boolean;
 };
 
+const mean = (values: (number | null)[]) => {
+  const present = values.filter((v): v is number => v != null);
+  return present.length > 0 ? present.reduce((a, b) => a + b, 0) / present.length : null;
+};
+
 /**
- * The target institution plus its nearest academic peers, carrying the two
- * measures the similarity scatter plots. Peers come from `academic_similarity`
- * (see .claude/skills/academic-similarity), which is restricted to the same
- * institution_type — so every point on the chart is the same kind of
- * institution as the target, and colouring by type would be monochrome.
+ * One cost-of-attendance figure per institution: the average of the in-state
+ * and out-of-state totals (tuition, fees, books, room and board, other
+ * expenses), since nothing here knows where the reader lives. Private
+ * institutions charge both the same, so for them it is simply the price.
+ * On-campus totals where published, off-campus otherwise — many commuter
+ * institutions report only the latter.
+ */
+function costOfAttendance(p: typeof pricing.$inferSelect): number | null {
+  return (
+    mean([p.inStateTotalOnCampus, p.outStateTotalOnCampus]) ??
+    mean([p.inStateTotalOffCampus, p.outStateTotalOffCampus])
+  );
+}
+
+/**
+ * The target institution plus its nearest academic peers, carrying the
+ * measures the similarity scatter encodes. Peers come from
+ * `academic_similarity` (see .claude/skills/academic-similarity), which is
+ * restricted to the same institution_type — so every point on the chart is the
+ * same kind of institution as the target, and colouring by type would be
+ * monochrome.
  *
- * Points missing either measure are returned rather than filtered out, so the
+ * Points missing a measure are returned rather than filtered out, so the
  * caller can say how many could not be plotted instead of dropping them
  * silently.
  */
 export async function getAcademicSimilarityScatter(
   unitid: number,
   year = DEFAULT_YEAR,
-  limit = 8,
+  limit = 12,
 ): Promise<SimilarityPoint[]> {
   const peers = await db
     .select({ peerUnitid: academicSimilarity.peerUnitid, distance: academicSimilarity.distance })
@@ -223,23 +252,42 @@ export async function getAcademicSimilarityScatter(
   const distanceByUnitid = new Map(peers.map((p) => [p.peerUnitid, p.distance]));
   const ids = [unitid, ...peers.map((p) => p.peerUnitid)];
 
-  const rows = await db
-    .select({
-      unitid: institutionYears.unitid,
-      name: institutionYears.name,
-      state: institutionYears.state,
-      yieldTotal: admissions.yieldTotal,
-      gradRateTotal: graduationRates.gradRateTotal,
-    })
-    .from(institutionYears)
-    .leftJoin(admissions, and(eq(admissions.unitid, institutionYears.unitid), eq(admissions.year, institutionYears.year)))
-    .leftJoin(
-      graduationRates,
-      and(eq(graduationRates.unitid, institutionYears.unitid), eq(graduationRates.year, institutionYears.year)),
-    )
-    .where(and(eq(institutionYears.year, year), inArray(institutionYears.unitid, ids)));
+  const [rows, pricingRows] = await Promise.all([
+    db
+      .select({
+        unitid: institutionYears.unitid,
+        name: institutionYears.name,
+        state: institutionYears.state,
+        gradRateTotal: graduationRates.gradRateTotal,
+        undergradTotal: enrollment.undergradTotal,
+        admissions,
+      })
+      .from(institutionYears)
+      .leftJoin(admissions, and(eq(admissions.unitid, institutionYears.unitid), eq(admissions.year, institutionYears.year)))
+      .leftJoin(
+        graduationRates,
+        and(eq(graduationRates.unitid, institutionYears.unitid), eq(graduationRates.year, institutionYears.year)),
+      )
+      .leftJoin(enrollment, and(eq(enrollment.unitid, institutionYears.unitid), eq(enrollment.year, institutionYears.year)))
+      .where(and(eq(institutionYears.year, year), inArray(institutionYears.unitid, ids))),
+    // Pricing falls back one year, as peer_network's inputs do in
+    // materialize.ts: a provisional release ships without the IC component, so
+    // the newest year has no pricing rows at all (see DEFAULT_YEAR above).
+    db
+      .select()
+      .from(pricing)
+      .where(and(inArray(pricing.unitid, ids), inArray(pricing.year, [year, year - 1])))
+      .orderBy(asc(pricing.year)),
+  ]);
 
   const byUnitid = new Map(rows.map((r) => [r.unitid, r]));
+  // Ascending by year, so the current year's figure overwrites last year's
+  // wherever both exist.
+  const costByUnitid = new Map<number, number>();
+  for (const p of pricingRows) {
+    const cost = costOfAttendance(p);
+    if (cost != null) costByUnitid.set(p.unitid, cost);
+  }
 
   // Emit in similarity order with the target first, so the chart's own order
   // matches the ranking rather than whatever order Postgres returned.
@@ -251,8 +299,12 @@ export async function getAcademicSimilarityScatter(
         unitid: row.unitid,
         name: row.name,
         state: row.state,
-        yieldTotal: row.yieldTotal,
+        yieldTotal: row.admissions?.yieldTotal ?? null,
         gradRateTotal: row.gradRateTotal,
+        admitRate: row.admissions?.pctAdmittedTotal ?? null,
+        satIndex: row.admissions ? satIndex(row.admissions) : null,
+        undergradTotal: row.undergradTotal,
+        costOfAttendance: costByUnitid.get(id) ?? null,
         distance: distanceByUnitid.get(id) ?? null,
         isTarget: id === unitid,
       };
