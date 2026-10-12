@@ -135,14 +135,20 @@ async function loadYear(year: number) {
   // degree-granting institutions (Associate's/Bachelor's/Master's/Doctoral).
   // DEGGRANT=1 is the correct gate — UGOFFER/GROFFER alone are too broad and
   // include certificate-only schools that grant no degree at all.
+  // For-profit institutions (CONTROL=3) are out of scope as well: none may
+  // appear in anything the app shows, so they are dropped here, once, rather
+  // than filtered in every query. The test is per year, so an institution
+  // that changed control is kept only for its years as public or nonprofit.
   const hd = tableOrNull(reader, `HD${year}`);
   if (!hd) throw new Error(`HD${year} not found`);
   const controlByUnitid = new Map<number, number | null>();
-  const degreeGrantingUnitids = new Set<number>(
-    hd.filter((r: any) => cleanInt(r.DEGGRANT) === 1).map((r: any) => r.UNITID),
+  const inScopeUnitids = new Set<number>(
+    hd
+      .filter((r: any) => cleanInt(r.DEGGRANT) === 1 && cleanInt(r.CONTROL) !== 3)
+      .map((r: any) => r.UNITID),
   );
   const institutionRows = hd
-    .filter((r: any) => degreeGrantingUnitids.has(r.UNITID))
+    .filter((r: any) => inScopeUnitids.has(r.UNITID))
     .map((r: any) => {
       const ugOffer = cleanInt(r.UGOFFER);
       const grOffer = cleanInt(r.GROFFER);
@@ -171,7 +177,7 @@ async function loadYear(year: number) {
       };
     });
   await batchedUpsert(db, schema.institutionYears, institutionRows, ["unitid", "year"]);
-  console.log(`  institution_years: ${institutionRows.length} (${hd.length - institutionRows.length} non-degree-granting excluded)`);
+  console.log(`  institution_years: ${institutionRows.length} (${hd.length - institutionRows.length} out of scope excluded)`);
 
   // --- admissions (ADM, falling back to IC for pre-2014 years) ---
   const adm = tableOrNull(reader, `ADM${year}`) ?? tableOrNull(reader, `IC${year}`);
@@ -179,7 +185,7 @@ async function loadYear(year: number) {
   const drvadmByUnitid = new Map<number, any>((drvadm ?? []).map((r: any) => [r.UNITID, r]));
   if (adm) {
     const admissionsRows = adm
-      .filter((r: any) => "APPLCN" in r && degreeGrantingUnitids.has(r.UNITID))
+      .filter((r: any) => "APPLCN" in r && inScopeUnitids.has(r.UNITID))
       .map((r: any) => {
         const derived = drvadmByUnitid.get(r.UNITID);
         return {
@@ -217,7 +223,7 @@ async function loadYear(year: number) {
   const drvef = tableOrNull(reader, `DRVEF${year}`);
   if (drvef) {
     const enrollmentRows = drvef
-      .filter((r: any) => degreeGrantingUnitids.has(r.UNITID))
+      .filter((r: any) => inScopeUnitids.has(r.UNITID))
       .map((r: any) => ({
       unitid: r.UNITID,
       year,
@@ -249,7 +255,7 @@ async function loadYear(year: number) {
   const drvc = tableOrNull(reader, `DRVC${year}`);
   if (drvc) {
     const completionsRows = drvc
-      .filter((r: any) => degreeGrantingUnitids.has(r.UNITID))
+      .filter((r: any) => inScopeUnitids.has(r.UNITID))
       .map((r: any) => ({
       unitid: r.UNITID,
       year,
@@ -275,7 +281,7 @@ async function loadYear(year: number) {
   const drvgr = tableOrNull(reader, `DRVGR${year}`);
   if (drvgr) {
     const gradRows = drvgr
-      .filter((r: any) => degreeGrantingUnitids.has(r.UNITID))
+      .filter((r: any) => inScopeUnitids.has(r.UNITID))
       .map((r: any) => ({
       unitid: r.UNITID,
       year,
@@ -299,15 +305,16 @@ async function loadYear(year: number) {
     console.log(`  graduation_rates: skipped (no DRVGR${year})`);
   }
 
-  // --- finance (DRVF) — pick F1 (GASB/public), F2 (FASB/nonprofit) or F3 (for-profit) by control ---
+  // --- finance (DRVF) — pick F1 (GASB/public) or F2 (FASB/private nonprofit) by control ---
+  // DRVF also carries F3 (for-profit) columns; for-profits are out of scope, so they are never read.
   const drvf = tableOrNull(reader, `DRVF${year}`);
   if (drvf) {
     const financeRows = drvf
-      .filter((r: any) => degreeGrantingUnitids.has(r.UNITID))
+      .filter((r: any) => inScopeUnitids.has(r.UNITID))
       .map((r: any) => {
       const control = controlByUnitid.get(r.UNITID);
-      const prefix = control === 1 ? "F1" : control === 3 ? "F3" : "F2";
-      const standard = control === 1 ? "gasb" : control === 3 ? "fasb_forprofit" : "fasb";
+      const prefix = control === 1 ? "F1" : "F2";
+      const standard = control === 1 ? "gasb" : "fasb";
       return {
         unitid: r.UNITID,
         year,
@@ -320,8 +327,8 @@ async function loadYear(year: number) {
         researchExpensePct: cleanNum(r[`${prefix}RSRCPC`]),
         studentServiceExpensePct: cleanNum(r[`${prefix}STSVPC`]),
         institutionalSupportExpensePct: cleanNum(r[`${prefix}INSUPC`]),
-        endowmentPerFte: prefix === "F3" ? null : cleanNum(r[`${prefix}ENDMFT`]),
-        equityRatio: prefix === "F3" ? null : cleanNum(r[`${prefix}EQUITR`]),
+        endowmentPerFte: cleanNum(r[`${prefix}ENDMFT`]),
+        equityRatio: cleanNum(r[`${prefix}EQUITR`]),
       };
     });
     await batchedUpsert(db, schema.finance, financeRows, ["unitid", "year"]);
@@ -334,7 +341,7 @@ async function loadYear(year: number) {
   const drvic = tableOrNull(reader, `DRVIC${year}`);
   if (drvic) {
     const pricingRows = drvic
-      .filter((r: any) => degreeGrantingUnitids.has(r.UNITID))
+      .filter((r: any) => inScopeUnitids.has(r.UNITID))
       .map((r: any) => ({
       unitid: r.UNITID,
       year,
@@ -355,7 +362,7 @@ async function loadYear(year: number) {
   const drvhr = tableOrNull(reader, `DRVHR${year}`);
   if (drvhr) {
     const facultyRows = drvhr
-      .filter((r: any) => degreeGrantingUnitids.has(r.UNITID))
+      .filter((r: any) => inScopeUnitids.has(r.UNITID))
       .map((r: any) => ({
       unitid: r.UNITID,
       year,
@@ -379,7 +386,7 @@ async function loadYear(year: number) {
   const sfa = tableOrNull(reader, `SFA${fiscalSuffix}_P1`);
   if (sfa) {
     const aidRows = sfa
-      .filter((r: any) => r.UNITID !== undefined && degreeGrantingUnitids.has(r.UNITID))
+      .filter((r: any) => r.UNITID !== undefined && inScopeUnitids.has(r.UNITID))
       .map((r: any) => ({
         unitid: r.UNITID,
         year,
@@ -412,7 +419,7 @@ async function loadYear(year: number) {
           LEAF_AWARD_LEVELS.has(r.AWLEVEL) &&
           isSixDigitCip(r.CIPCODE) &&
           r.CTOTALT > 0 &&
-          degreeGrantingUnitids.has(r.UNITID),
+          inScopeUnitids.has(r.UNITID),
       )
       .map((r: any) => ({
         unitid: r.UNITID,

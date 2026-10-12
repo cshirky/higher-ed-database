@@ -155,14 +155,14 @@ export const graduationRates = pgTable(
   ],
 );
 
-// Accounting standard varies by control type (GASB=public, FASB=private nonprofit, FASB_FP=for-profit);
-// loader picks the matching F1/F2/F3-prefixed source columns and normalizes them into this one shape.
+// Accounting standard varies by control type (GASB=public, FASB=private nonprofit);
+// loader picks the matching F1/F2-prefixed source columns and normalizes them into this one shape.
 export const finance = pgTable(
   "finance",
   {
     unitid: integer("unitid").notNull(),
     year: smallint("year").notNull(),
-    accountingStandard: text("accounting_standard"), // gasb | fasb | fasb_forprofit
+    accountingStandard: text("accounting_standard"), // gasb | fasb
     coreRevenueTotal: bigint("core_revenue_total", { mode: "number" }),
     coreExpenseTotal: bigint("core_expense_total", { mode: "number" }),
     tuitionRevenuePerFte: doublePrecision("tuition_revenue_per_fte"),

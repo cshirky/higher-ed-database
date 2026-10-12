@@ -4,8 +4,9 @@ description: >-
   Defines which IPEDS institutions belong in this project and how to classify
   them as College/University/Graduate school. Use whenever writing or
   reviewing ETL/classification/filtering logic touching institution_type,
-  HLOFFER, DEGGRANT, UGOFFER, or GROFFER, or when a query result includes
-  unexpected certificate-only or non-degree-granting institutions.
+  HLOFFER, DEGGRANT, CONTROL, UGOFFER, or GROFFER, or when a query result
+  includes unexpected certificate-only, non-degree-granting, or for-profit
+  institutions. For-profit institutions are never shown to the user.
 ---
 
 # Institution scope
@@ -14,6 +15,24 @@ This project is only concerned with colleges and universities in the US,
 defined as institutions that grant Associate's, Bachelor's, Master's, or
 Doctoral degrees. **Institutions granting only certificates are not to be
 included.**
+
+## No for-profit institutions
+
+**A for-profit college must never appear in any data shown to the user** —
+not in Browse or search, not on an institution page, not as a peer in a
+similarity chart, and not inside a nationwide count or average. Rule set
+2026-10-12.
+
+For-profit is IPEDS `CONTROL = 3` (1 = public, 2 = private nonprofit). It is
+enforced where `DEGGRANT` is: `scripts/etl/load-year.ts` leaves `CONTROL = 3`
+institutions out of its in-scope set, so no for-profit row is ever written to
+any table and no query has to remember to filter. Do not rely on a per-query
+`control != 3` filter instead — the materialized tables (`nationwide_trends`,
+`peer_network`, `academic_similarity`) are computed over whatever is stored.
+
+The test is per year. An institution that converted between for-profit and
+nonprofit is kept only for the years it reported as public or nonprofit, so
+its time series can start or stop at the conversion.
 
 ## The three project-specific categories
 
@@ -52,9 +71,9 @@ this question but don't, on their own:
 
 ### Scope gate: fixed 2026-07-23 (commit 05febbb)
 
-`scripts/etl/load-year.ts` now gates on `DEGGRANT = 1`, building a
-`degreeGrantingUnitids` set from `HD{year}` and filtering **every** fact table
-through it, not just `institution_years`. `institutionType()` still reads
+`scripts/etl/load-year.ts` now gates on `DEGGRANT = 1` (and, since 2026-10-12,
+`CONTROL != 3`), building an `inScopeUnitids` set from `HD{year}` and filtering
+**every** fact table through it, not just `institution_years`. `institutionType()` still reads
 `UGOFFER`/`GROFFER`, which is correct now that scope is gated first: those
 flags only decide *which* of the three categories a degree-granting
 institution lands in, never whether it's in scope at all.
@@ -74,7 +93,7 @@ otherwise.
 
 Load this skill (or at least re-read this file) before:
 - Changing anything in `scripts/etl/load-year.ts` related to
-  `institutionType`, `HLOFFER`, `DEGGRANT`, `UGOFFER`, or `GROFFER`.
+  `institutionType`, `HLOFFER`, `DEGGRANT`, `CONTROL`, `UGOFFER`, or `GROFFER`.
 - Adding new queries or pages that filter/group by institution type.
 - Explaining or debugging why an institution count on `/compare` or
   `/institutions` looks larger or smaller than expected — check whether
