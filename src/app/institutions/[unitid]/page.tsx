@@ -1,10 +1,10 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import { getInstitution, getInstitutionTimeSeries, getAcademicSimilarityScatter, getTopDegrees, DEFAULT_YEAR } from "@/db/queries";
+import { getInstitution, getInstitutionTimeSeries, getAcademicPeerComparison, getTopDegrees, DEFAULT_YEAR } from "@/db/queries";
 import { INSTITUTION_TYPE_LABELS, CONTROL_LABELS, LOCALE_LABELS } from "@/lib/institution-types";
 import { CIP_PREFIX_LABELS } from "@/lib/cip-labels";
 import { TimeSeriesChart } from "@/components/time-series-chart";
-import { SimilarityScatter } from "@/components/similarity-scatter";
+import { PeerTable } from "@/components/peer-table";
 
 function byYear<T extends { year: number }>(rows: T[]): Record<string, unknown>[] {
   return rows;
@@ -16,11 +16,11 @@ export default async function InstitutionPage({ params }: { params: Promise<{ un
   const institution = await getInstitution(unitid);
   if (!institution) notFound();
 
-  const [series, similarityPoints, topDegrees] = await Promise.all([
+  const [series, peers, topDegrees] = await Promise.all([
     getInstitutionTimeSeries(unitid),
     // The 12 nearest academic peers that are not well below this institution
-    // on either axis.
-    getAcademicSimilarityScatter(unitid, DEFAULT_YEAR, 12),
+    // on yield or graduation rate.
+    getAcademicPeerComparison(unitid, DEFAULT_YEAR, 12),
     getTopDegrees(unitid, DEFAULT_YEAR),
   ]);
 
@@ -54,7 +54,7 @@ export default async function InstitutionPage({ params }: { params: Promise<{ un
             <p className="mt-1 text-sm font-medium">{yieldPct}</p>
           </div>
           <div className="col-span-2">
-            <p className="text-xs font-medium uppercase tracking-wide text-[var(--text-muted)]">Most Popular Degrees</p>
+            <p className="text-xs font-medium uppercase tracking-wide text-[var(--text-muted)]">Most Popular Majors</p>
             <ol className="mt-1 space-y-0.5">
               {topDegrees.map((d, i) => (
                 <li key={d.prefix} className="flex items-baseline justify-between gap-2 text-sm">
@@ -143,7 +143,7 @@ export default async function InstitutionPage({ params }: { params: Promise<{ un
       </div>
 
       <div className="mt-6">
-        <SimilarityScatter points={similarityPoints} />
+        <PeerTable rows={peers} />
       </div>
     </div>
   );

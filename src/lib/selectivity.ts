@@ -1,4 +1,4 @@
-// Selectivity as the peer scatter uses it: admit rate and an SAT-indexed test
+// Selectivity as the peer table uses it: admit rate and an SAT-indexed test
 // score, compared between two institutions rather than scored on its own.
 
 // ACT composite → SAT total, from the 2018 ACT/College Board concordance. This

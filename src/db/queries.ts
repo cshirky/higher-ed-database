@@ -185,7 +185,7 @@ export async function getAcademicPeers(unitid: number, year = DEFAULT_YEAR, limi
   return peersFromTable(academicSimilarity, unitid, year, limit);
 }
 
-export type SimilarityPoint = {
+export type AcademicPeer = {
   unitid: number;
   name: string;
   state: string | null;
@@ -203,6 +203,8 @@ export type SimilarityPoint = {
   totalEnrollment: number | null;
   /** Published annual cost of attendance in dollars — see `costOfAttendance` below. */
   costOfAttendance: number | null;
+  /** Largest subject areas by bachelor's degrees conferred, most first: 2-digit CIP prefix and count. */
+  topMajors: { prefix: string; total: number }[];
   /** Academic-similarity rank among all stored peers; null on the target itself. */
   rank: number | null;
   isTarget: boolean;
@@ -233,11 +235,11 @@ function costOfAttendance(p: typeof pricing.$inferSelect): number | null {
 
 /**
  * The target institution plus the `limit` nearest academic peers worth
- * comparing it against, carrying the measures the similarity scatter encodes.
+ * comparing it against, carrying the measures the peer table shows.
  * Peers come from `academic_similarity` (see .claude/skills/academic-similarity),
  * which is restricted to the same institution_type.
  *
- * The selection is deliberately one-sided: the chart exists to surface
+ * The selection is deliberately one-sided: the comparison exists to surface
  * comparable-or-better institutions, so a peer PEER_FLOOR_POINTS or more below
  * the target on yield or on graduation rate is passed over, as is one that
  * reports neither and so could not be placed. The table stores more peers per
@@ -249,11 +251,12 @@ function costOfAttendance(p: typeof pricing.$inferSelect): number | null {
  * to compare against, and the nearest `limit` peers are returned unfiltered
  * for the caller's table.
  */
-export async function getAcademicSimilarityScatter(
+export async function getAcademicPeerComparison(
   unitid: number,
   year = DEFAULT_YEAR,
   limit = 12,
-): Promise<SimilarityPoint[]> {
+  majorsPerInstitution = 5,
+): Promise<AcademicPeer[]> {
   const peers = await db
     .select({ peerUnitid: academicSimilarity.peerUnitid, rank: academicSimilarity.rank })
     .from(academicSimilarity)
@@ -263,7 +266,8 @@ export async function getAcademicSimilarityScatter(
   const rankByUnitid = new Map(peers.map((p) => [p.peerUnitid, p.rank]));
   const ids = [unitid, ...peers.map((p) => p.peerUnitid)];
 
-  const [rows, pricingRows] = await Promise.all([
+  const majorPrefix = sql<string>`LEFT(${completionsByField.cipCode}, 2)`;
+  const [rows, pricingRows, majorRows] = await Promise.all([
     db
       .select({
         unitid: institutionYears.unitid,
@@ -291,6 +295,24 @@ export async function getAcademicSimilarityScatter(
       .from(pricing)
       .where(and(inArray(pricing.unitid, ids), inArray(pricing.year, [year, year - 1])))
       .orderBy(asc(pricing.year)),
+    // Every subject area for every candidate, largest first; trimmed to the top
+    // few per institution below. A few dozen rows each, so no window function.
+    db
+      .select({
+        unitid: completionsByField.unitid,
+        prefix: majorPrefix,
+        total: sql<number>`SUM(${completionsByField.count})::int`,
+      })
+      .from(completionsByField)
+      .where(
+        and(
+          inArray(completionsByField.unitid, ids),
+          eq(completionsByField.year, year),
+          eq(completionsByField.awardLevel, BACHELORS_AWARD_LEVEL),
+        ),
+      )
+      .groupBy(completionsByField.unitid, majorPrefix)
+      .orderBy(sql`SUM(${completionsByField.count}) DESC`, majorPrefix),
   ]);
 
   const byUnitid = new Map(rows.map((r) => [r.unitid, r]));
@@ -302,7 +324,14 @@ export async function getAcademicSimilarityScatter(
     if (cost != null) costByUnitid.set(p.unitid, cost);
   }
 
-  // In similarity order with the target first, so the chart's own order
+  const majorsByUnitid = new Map<number, { prefix: string; total: number }[]>();
+  for (const m of majorRows) {
+    const list = majorsByUnitid.get(m.unitid) ?? [];
+    if (list.length < majorsPerInstitution) list.push({ prefix: m.prefix, total: m.total });
+    majorsByUnitid.set(m.unitid, list);
+  }
+
+  // In similarity order with the target first, so the table's default order
   // matches the ranking rather than whatever order Postgres returned.
   const points = ids
     .map((id) => {
@@ -320,11 +349,12 @@ export async function getAcademicSimilarityScatter(
         undergradTotal: row.undergradTotal,
         totalEnrollment: row.totalEnrollment,
         costOfAttendance: costByUnitid.get(id) ?? null,
+        topMajors: majorsByUnitid.get(id) ?? [],
         rank: rankByUnitid.get(id) ?? null,
         isTarget: id === unitid,
       };
     })
-    .filter((p): p is SimilarityPoint => p !== null);
+    .filter((p): p is AcademicPeer => p !== null);
 
   const target = points.find((p) => p.isTarget);
   if (!target) return [];
@@ -342,6 +372,13 @@ export async function getAcademicSimilarityScatter(
   return [target, ...selected.slice(0, limit)];
 }
 
+// IPEDS AWLEVEL 5. Everything this app shows is for students pursuing a
+// bachelor's degree, so "majors" means bachelor's degrees conferred — not the
+// MBAs, JDs and associate's degrees an all-levels total would fold in. Other
+// award levels still count toward academic similarity, where the presence and
+// scale of graduate programmes is part of what makes two schools alike.
+const BACHELORS_AWARD_LEVEL = 5;
+
 export async function getTopDegrees(unitid: number, year = DEFAULT_YEAR, limit = 5) {
   return db
     .select({
@@ -351,7 +388,13 @@ export async function getTopDegrees(unitid: number, year = DEFAULT_YEAR, limit =
       total: sql<number>`SUM(${completionsByField.count})::int`,
     })
     .from(completionsByField)
-    .where(and(eq(completionsByField.unitid, unitid), eq(completionsByField.year, year)))
+    .where(
+      and(
+        eq(completionsByField.unitid, unitid),
+        eq(completionsByField.year, year),
+        eq(completionsByField.awardLevel, BACHELORS_AWARD_LEVEL),
+      ),
+    )
     .groupBy(sql`LEFT(${completionsByField.cipCode}, 2)`)
     .having(sql`SUM(${completionsByField.count}) > 0`)
     // Prefix as tiebreak so equal counts keep one order between requests.

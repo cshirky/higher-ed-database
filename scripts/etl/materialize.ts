@@ -10,9 +10,9 @@ import * as schema from "../../src/db/schema";
 import { batchedUpsert } from "./upsert";
 
 const PEER_LIMIT = 12;
-// academic_similarity is stored deeper than it is shown: the peer scatter
+// academic_similarity is stored deeper than it is shown: the peer table
 // keeps only peers that are not well below the target on yield or graduation
-// rate, then takes the nearest 12 of those (getAcademicSimilarityScatter), so
+// rate, then takes the nearest 12 of those (getAcademicPeerComparison), so
 // it needs a pool to select from. 60 lets most institutions fill all 12.
 const ACADEMIC_PEER_LIMIT = 60;
 // Must match DEFAULT_YEAR in src/db/queries.ts. peer_network and
