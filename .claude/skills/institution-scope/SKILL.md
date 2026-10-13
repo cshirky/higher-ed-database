@@ -28,7 +28,7 @@ enforced where `DEGGRANT` is: `scripts/etl/load-year.ts` leaves `CONTROL = 3`
 institutions out of its in-scope set, so no for-profit row is ever written to
 any table and no query has to remember to filter. Do not rely on a per-query
 `control != 3` filter instead — the materialized tables (`nationwide_trends`,
-`peer_network`, `academic_similarity`) are computed over whatever is stored.
+`academic_similarity`) are computed over whatever is stored.
 
 The test is per year. An institution that converted between for-profit and
 nonprofit is kept only for the years it reported as public or nonprofit, so

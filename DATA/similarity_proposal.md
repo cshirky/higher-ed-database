@@ -2,6 +2,11 @@
 
 ## Purpose
 
+> **Note, 2026-10-13:** `peer_network` was dropped after this was written — no
+> page read it. References to it below describe the design as it stood; its
+> SQL (including the one-year fallback and shared-dimension scoring discussed
+> here) is in git history, in `scripts/etl/materialize.ts` before that date.
+
 Today the project has two precomputed, fixed-weight similarity indexes:
 `peer_network` (institutional profile: enrollment, admit rate, tuition,
 instruction spend — see `.claude/skills/precompute-over-live-query`) and

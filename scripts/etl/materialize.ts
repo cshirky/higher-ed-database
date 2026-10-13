@@ -1,4 +1,4 @@
-// Precomputes nationwide_trends and peer_network from the raw fact tables.
+// Precomputes nationwide_trends and academic_similarity from the raw fact tables.
 // Run after any ETL backfill — see .claude/skills/precompute-over-live-query.
 // The app reads these two tables directly; it never aggregates/joins live.
 import { config } from "dotenv";
@@ -8,23 +8,18 @@ import { neon } from "@neondatabase/serverless";
 import { drizzle } from "drizzle-orm/neon-http";
 import * as schema from "../../src/db/schema";
 import { batchedUpsert } from "./upsert";
+import { refreshSite } from "./refresh-site";
 
-const PEER_LIMIT = 12;
 // academic_similarity is stored deeper than it is shown: the peer table
 // keeps only peers that are not well below the target on yield or graduation
 // rate, then takes the nearest 12 of those (getAcademicPeerComparison), so
 // it needs a pool to select from. 60 lets most institutions fill all 12.
 const ACADEMIC_PEER_LIMIT = 60;
-// Must match DEFAULT_YEAR in src/db/queries.ts. peer_network and
-// academic_similarity are computed for this one year rather than every loaded
-// year, because nothing in the app queries any other year for either (see
+// Must match DEFAULT_YEAR in src/db/queries.ts. academic_similarity is
+// computed for this one year rather than every loaded year, because nothing in
+// the app queries any other year for it (see
 // .claude/skills/precompute-over-live-query). nationwide_trends stays
 // full-history since /compare genuinely uses every year.
-//
-// This used to be a hard constraint as well: all 15 years of both tables
-// exceeded Neon's free-tier 512MB project limit. That plan has since been
-// upgraded, so the limit no longer applies — widening this to more years is
-// now a cost/benefit call rather than something that will fail outright.
 //
 // Note these upserts never delete, so prior years' rows survive a bump here.
 const DEFAULT_YEAR = 2024;
@@ -93,120 +88,6 @@ async function main() {
   }));
   await batchedUpsert(db, schema.nationwideTrends, trendsToInsert, ["institutionType", "year"]);
   console.log(`nationwide_trends: ${trendsToInsert.length} rows`);
-
-  // --- peer_network, computed only for DEFAULT_YEAR (see note above) ---
-  let totalPeerRows = 0;
-  for (const year of [DEFAULT_YEAR]) {
-    const peerRows = await sqlClient`
-      -- Each dimension falls back one year when the current year has no value,
-      -- then gives up: IPEDS provisional releases ship components piecemeal, so
-      -- the newest year routinely lacks a whole survey (2024-25 has no IC at
-      -- all, hence no pricing row for any institution) while the year before it
-      -- is complete. Without the fallback a whole dimension silently vanishes
-      -- from the comparison the moment DEFAULT_YEAR advances.
-      --
-      -- One year only, by design. A value two years stale is more misleading
-      -- than an absent one, and the scoring below already handles absence
-      -- correctly by averaging over just the dimensions a pair actually shares.
-      -- This is a current-snapshot view, which is what makes carry-forward
-      -- appropriate here; nationwide_trends is deliberately NOT treated this
-      -- way, since it charts one row per year and a carried-forward figure
-      -- would misreport that year.
-      with base as (
-        select
-          iy.unitid,
-          iy.institution_type,
-          coalesce(e.total, e_prev.total) as enrollment_total,
-          coalesce(a.pct_admitted_total, a_prev.pct_admitted_total) as admit_rate,
-          coalesce(p.tuition_fees_in_state, p_prev.tuition_fees_in_state) as tuition,
-          coalesce(f.instruction_expense_per_fte, f_prev.instruction_expense_per_fte) as instruction_expense
-        from institution_years iy
-        left join enrollment e on e.unitid = iy.unitid and e.year = iy.year
-        left join enrollment e_prev on e_prev.unitid = iy.unitid and e_prev.year = iy.year - 1
-        left join admissions a on a.unitid = iy.unitid and a.year = iy.year
-        left join admissions a_prev on a_prev.unitid = iy.unitid and a_prev.year = iy.year - 1
-        left join pricing p on p.unitid = iy.unitid and p.year = iy.year
-        left join pricing p_prev on p_prev.unitid = iy.unitid and p_prev.year = iy.year - 1
-        left join finance f on f.unitid = iy.unitid and f.year = iy.year
-        left join finance f_prev on f_prev.unitid = iy.unitid and f_prev.year = iy.year - 1
-        where iy.year = ${year}
-          and iy.institution_type in ('college', 'university', 'graduate_school')
-      ),
-      stats as (
-        select institution_type,
-          stddev(enrollment_total) as e_std,
-          stddev(admit_rate) as a_std,
-          stddev(tuition) as t_std,
-          stddev(instruction_expense) as x_std
-        from base
-        group by institution_type
-      ),
-      -- One squared z-difference per dimension, left NULL when either side does
-      -- not report it (or the cohort has no spread to normalize against) so that
-      -- "no data" stays distinguishable from "no difference" downstream.
-      pairs as (
-        select
-          b1.unitid as unitid,
-          b2.unitid as peer_unitid,
-          power((b1.enrollment_total - b2.enrollment_total) / nullif(s.e_std, 0), 2) as d_enrollment,
-          power((b1.admit_rate - b2.admit_rate) / nullif(s.a_std, 0), 2) as d_admit,
-          power((b1.tuition - b2.tuition) / nullif(s.t_std, 0), 2) as d_tuition,
-          power((b1.instruction_expense - b2.instruction_expense) / nullif(s.x_std, 0), 2) as d_instruction
-        from base b1
-        join base b2 on b2.institution_type = b1.institution_type and b2.unitid != b1.unitid
-        join stats s on s.institution_type = b1.institution_type
-        where b1.enrollment_total is not null and b2.enrollment_total is not null
-      ),
-      -- Root-mean-square over only the dimensions BOTH institutions report,
-      -- rather than summing with missing terms coalesced to zero. Summing
-      -- treated an absent dimension as a perfect match, so an institution
-      -- reporting only enrollment scored as identical on everything else and
-      -- surfaced as a close peer to anything of its size. Averaging instead
-      -- means a sparse pair is judged solely on what it actually shares, while
-      -- pairs sharing more dimensions are divided by a larger count — so a
-      -- well-evidenced match now outranks a match that is mostly absence.
-      -- Distances are consequently not comparable to values stored before this
-      -- change; the whole table is recomputed together, so that is internal.
-      scored as (
-        select
-          unitid,
-          peer_unitid,
-          sqrt(
-            (
-              coalesce(d_enrollment, 0) +
-              coalesce(d_admit, 0) +
-              coalesce(d_tuition, 0) +
-              coalesce(d_instruction, 0)
-            ) / nullif(
-              (case when d_enrollment is null then 0 else 1 end) +
-              (case when d_admit is null then 0 else 1 end) +
-              (case when d_tuition is null then 0 else 1 end) +
-              (case when d_instruction is null then 0 else 1 end),
-              0
-            )
-          ) as distance
-        from pairs
-      ),
-      ranked as (
-        select unitid, peer_unitid, distance,
-          row_number() over (partition by unitid order by distance asc) as rank
-        from scored
-        where distance is not null
-      )
-      select unitid, peer_unitid, distance, rank from ranked where rank <= ${PEER_LIMIT}
-    `;
-    const rowsToInsert = (peerRows as any[]).map((r) => ({
-      unitid: r.unitid,
-      year,
-      rank: r.rank,
-      peerUnitid: r.peer_unitid,
-      distance: Number(r.distance),
-    }));
-    await batchedUpsert(db, schema.peerNetwork, rowsToInsert, ["unitid", "year", "rank"]);
-    totalPeerRows += rowsToInsert.length;
-    console.log(`  peer_network ${year}: ${rowsToInsert.length} rows`);
-  }
-  console.log(`peer_network total: ${totalPeerRows} rows`);
 
   // --- academic_similarity — see .claude/skills/academic-similarity for the
   // formula. Computed in JS rather than SQL: it needs a sparse cosine
@@ -324,6 +205,10 @@ async function main() {
     console.log(`  academic_similarity ${year}: ${rowsToInsert.length} rows`);
   }
   console.log(`academic_similarity total: ${totalAcademicRows} rows`);
+
+  // Last, once everything the pages read is in place: they are cached until
+  // told the data has changed (see src/app/api/revalidate/route.ts).
+  await refreshSite();
 }
 
 main().catch((err) => {

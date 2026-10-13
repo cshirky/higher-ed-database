@@ -253,21 +253,6 @@ export const nationwideTrends = pgTable(
   (t) => [primaryKey({ columns: [t.institutionType, t.year] })],
 );
 
-export const peerNetwork = pgTable(
-  "peer_network",
-  {
-    unitid: integer("unitid").notNull(),
-    year: smallint("year").notNull(),
-    rank: smallint("rank").notNull(),
-    peerUnitid: integer("peer_unitid").notNull(),
-    distance: doublePrecision("distance").notNull(),
-  },
-  (t) => [
-    primaryKey({ columns: [t.unitid, t.year, t.rank] }),
-    index("peer_network_unitid_year_idx").on(t.unitid, t.year),
-  ],
-);
-
 // Degrees conferred by 6-digit CIP code (subject) and award level, first
 // major only (MAJORNUM=1, avoids double-counting double majors). Source for
 // academic-similarity — see .claude/skills/academic-similarity.
@@ -297,6 +282,5 @@ export const academicSimilarity = pgTable(
   },
   (t) => [
     primaryKey({ columns: [t.unitid, t.year, t.rank] }),
-    index("academic_similarity_unitid_year_idx").on(t.unitid, t.year),
   ],
 );

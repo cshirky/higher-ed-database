@@ -15,7 +15,6 @@ async function main() {
     "financial_aid",
     "completions_by_field",
     "nationwide_trends",
-    "peer_network",
     "academic_similarity",
     "institution_years",
   ];

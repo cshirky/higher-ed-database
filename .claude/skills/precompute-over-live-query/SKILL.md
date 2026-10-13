@@ -21,10 +21,13 @@ benefit to live computation here — only extra latency and database load.
 - `nationwide_trends` table, read by `getNationwideTrends()` — backs
   `/compare`. Formerly a live 5-table join + `group by` across ~90k+ rows on
   every page load.
-- `peer_network` table, read by `getPeers()` — backs the peer-similarity
-  section of `/institutions/[unitid]`. Formerly an O(n²) z-normalized
-  similarity computation across the whole institution-type cohort, per
-  request.
+- `academic_similarity` table, read by `getAcademicPeerComparison()` — backs
+  the peer table on `/institutions/[unitid]`. An O(n²) comparison across the
+  whole institution-type cohort; see `.claude/skills/academic-similarity`.
+
+(A third, `peer_network` — overall-profile similarity on enrollment, admit
+rate, tuition and instructional spending — was dropped on 2026-10-13 once no
+page read it. Its SQL is in git history, in `materialize.ts` before that date.)
 
 Both are now filled by `scripts/etl/materialize.ts` and queried with a plain
 indexed `select` — no live join/aggregation happens on request anymore.
@@ -33,10 +36,11 @@ indexed `select` — no live join/aggregation happens on request anymore.
 
 **`scripts/etl/materialize.ts` must be re-run any time `load-year.ts` is run**
 — for a fresh year, a re-backfill, or a scope/classification change (like the
-`DEGGRANT` fix). `nationwide_trends` and `peer_network` are snapshots computed
-from the fact tables at materialize time; they do **not** update themselves,
-so skipping this step leaves `/compare` and every institution's peer network
-silently serving stale data even though the underlying tables are current.
+`DEGGRANT` fix). `nationwide_trends` and `academic_similarity` are snapshots
+computed from the fact tables at materialize time; they do **not** update
+themselves, so skipping this step leaves `/compare` and every institution's
+peer table silently serving stale data even though the underlying tables are
+current.
 
 ```bash
 npx tsx scripts/etl/load-year.ts <years...>
