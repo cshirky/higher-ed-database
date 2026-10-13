@@ -44,11 +44,16 @@ npx tsx scripts/etl/materialize.ts                # ALWAYS follows a backfill
 npx tsx scripts/etl/sanity-check.ts               # optional spot check
 ```
 
-`materialize.ts` is not optional. It precomputes `nationwide_trends`,
-`peer_network`, and `academic_similarity`, which the app reads with plain
-indexed selects — they never update themselves, so skipping it leaves
-`/compare` and every peer network silently serving stale data. See
+`materialize.ts` is not optional. It precomputes `nationwide_trends` and
+`academic_similarity`, which the app reads with plain indexed selects — they
+never update themselves, so skipping it leaves `/compare` and every
+institution's peer table silently serving stale data. See
 `.claude/skills/precompute-over-live-query`.
+
+Pages are cached until the data changes, so `materialize.ts` ends by asking
+the deployed site to drop its cache (`SITE_URL` and `REVALIDATE_SECRET` in
+`.env.local`; see `.env.example`). If it reports the site was **not**
+refreshed, the new data appears only after the next deploy.
 
 `load-year.ts` upserts but never deletes. If a change alters *which*
 institutions are in scope, run `npx tsx scripts/etl/truncate-all.ts` first,

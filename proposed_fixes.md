@@ -373,145 +373,269 @@ still provisional.
 
 ## C. Unused or redundant code, CSS and data
 
-### C1. Dead query code left behind by the scatter replacement (`cf23cad`) — confirmed by grep
+> **Concrete proposals added 2026-10-13.** Nothing in this section has been
+> changed yet. Every observation was re-checked against commit `042c967` and
+> the live database; several had moved since the review, and two new ones
+> turned up (C8). Items are marked **safe** (delete-only, no behaviour
+> change), **decide** (needs a choice from you), or **data** (touches the
+> database).
 
-- `getPeers`, `getAcademicPeers`, `peersFromTable` (`queries.ts:145-180`) —
-  no callers.
-- `SimilarityPoint.distance` (`queries.ts:190-191, 218, 251`) — computed and
-  shipped to the client, never displayed.
-- `InstitutionSearchParams.pageSize` — never passed; `page` in the return
-  value of `searchInstitutions` — never read.
+### C1. Dead query code — safe
 
-### C2. `peer_network` is computed and stored but nothing reads it — confirmed
+> **Partly done 2026-10-13:** the three peer functions went with C2. The `pageSize` / `page` tidy-up is still open.
 
-With `getPeers` unused, no page reads `peer_network` (48,096 rows). It is the
-most expensive step in `materialize.ts` (a ~4,000² self-join,
-`materialize.ts:92-204`). `DATA/similarity_proposal.md` may intend to revive
-it, so this is your call: **either** drop the table, its schema entry and
-that block, **or** leave it and add a one-line comment saying it is parked.
+Still true: `peersFromTable`, `getPeers`, `getAcademicPeers`
+(`src/db/queries.ts:154-189`) have no callers. (`SimilarityPoint.distance`
+from the original note is already gone.)
 
-### C3. Two wasted queries on every institution page — confirmed by grep
+**Proposed:** delete those three functions and the now-unused `peerNetwork`
+import. In `searchInstitutions`, replace the never-passed `pageSize` option
+with a module constant and stop returning `page`, which no caller reads:
 
-`getInstitutionTimeSeries` (`queries.ts:92, 99`) fetches `institution_years`
-and `faculty` for all years; the page uses neither `series.institution` nor
-`series.faculty`. Meanwhile `getInstitution` (`queries.ts:71-78`) fetches
-every year's `institution_years` row *again* just to take the newest.
-**Fix:** drop both from the time-series fetch and add `.limit(1)` to
-`getInstitution`. That takes the page from 13 HTTP round-trips to 11.
+```ts
+const PAGE_SIZE = 25;
+…
+return { rows, total: count, pageSize: PAGE_SIZE };
+```
 
-Also worth considering: the institution page is fully dynamic, so all of
-these run on every view of data that changes once a year. Caching it the way
-`/compare` is (`revalidate`) fits the project's own precompute rule.
+### C2. `peer_network` is computed and stored but nothing reads it — decide, data
 
-### C4. The `"other"` institution type is dead everywhere — confirmed
+> **Done 2026-10-13:** table dropped; removed from the schema, `materialize.ts`, `truncate-all.ts`, the README and the three skills. `DATA/similarity_proposal.md` has a dated note rather than a rewrite.
 
-There are **0** `other` rows in any year (the `DEGGRANT` gate removed them,
-and the `institution-scope` skill says they must not exist). Yet it is still
-carried in: `INSTITUTION_TYPES`, `INSTITUTION_TYPE_LABELS.other`,
-`INSTITUTION_TYPE_COLORS.other` (`src/lib/institution-types.ts:5, 12, 22`),
-the `Exclude<…, "other">` on `compare/page.tsx:13`, the
-`.filter((t) => t !== "other")` on `institutions/page.tsx:65`, and three
-`institution_type in (…)` filters in `materialize.ts`. **Fix:** remove
-`other` from the type; have `institutionType()` in `load-year.ts` throw (or
-skip the row with a warning) if it ever would return it.
+Still true, and it now has a cost: the `peer_network` step is a
+3,381 × 3,381 self-join, and on one of the last four `materialize.ts` runs the
+database took long enough over it to time out the connection, aborting the run
+before it reached `academic_similarity`, which the app does use.
 
-### C5. Unused exports and constants — confirmed by grep
+**Proposed: drop it.** `DATA/similarity_proposal.md` describes replacing both
+fixed-weight indexes with a new design, so this table is not the thing that
+would be revived; and it is fully recoverable from git plus a materialize run.
+Concretely:
 
-- `SECTOR_LEVEL_LABELS` (`institution-types.ts:31-35`) — unused.
-- `CHART_INK.surface` (`src/lib/colors.ts:18`) — unused; both charts write
-  the literal `"var(--surface)"` instead. Use it or remove it.
-- `CONTROL_LABELS` exists but `institutions/page.tsx:104` re-implements it as
-  a nested ternary. Use the constant.
-- The type-label lookup with its `as keyof typeof …` cast is repeated three
-  times (`compare/page.tsx:34`, `institutions/page.tsx:101`,
-  `[unitid]/page.tsx:27`) — one `institutionTypeLabel(t: string)` helper.
+- `drop table peer_network` (39,708 rows, 9.6 MB);
+- remove `peerNetwork` from `src/db/schema.ts`;
+- remove the `peer_network` block and `PEER_LIMIT` from `materialize.ts`
+  (about 115 lines, and most of its runtime);
+- remove it from `truncate-all.ts`, and update the four places that describe
+  it as live: `README.md:48`, the `precompute-over-live-query` skill, the
+  `academic-similarity` skill, and the note in `queries.ts:23-27`.
 
-### C6. Fonts and CSS that are loaded but never applied — confirmed by grep
+**Alternative:** keep the table and its data but stop recomputing it (delete
+only the materialize block). The data then goes stale silently, so I would
+not.
 
-- **Geist and Geist Mono are downloaded and never used.** `layout.tsx:6-14`
-  loads both and `globals.css:26-27` maps them to `--font-sans` /
-  `--font-mono`, but `globals.css:55` then sets
-  `body { font-family: system-ui, … }`, and no element uses `font-sans` or
-  `font-mono`. Decide which you want: delete the `next/font` setup (keeps the
-  current look), or delete line 55 (switches the site to Geist).
-- `--color-background` / `--color-foreground` (`globals.css:24-25`) — no
-  `bg-background` / `text-foreground` class is used anywhere; the code uses
-  `var(--background)` directly.
-- `--series-5`, `--series-7`, `--series-8` are reachable only through
-  `SERIES_COLORS`, and no chart has more than three series; `--series-4` is
-  used only by the dead `other` colour (C4). Harmless as palette headroom —
-  listed for completeness, I'd keep them.
+### C3. Wasted queries on every institution page — safe, plus one decide
 
-### C7. Redundant indexes — confirmed
+> **Done 2026-10-13.** The two unused queries are gone and `getInstitution` takes one row. Caching went further than proposed, at the user's direction: no timer at all — institution pages and `/compare` are cached until `materialize.ts` calls the new `/api/revalidate` endpoint (or a deploy happens). Verified on a local production build: first view 0.65s, cached views 0.005s, and a refresh call makes the next view re-render. **Needs `REVALIDATE_SECRET` set in Vercel to work in production.**
 
-`peer_network_unitid_year_idx` (2.0 MB) and
-`academic_similarity_unitid_year_idx` (1.4 MB) index `(unitid, year)`, which
-is already the leading prefix of each table's primary key
-`(unitid, year, rank)` (`schema.ts:267, 300`). Postgres uses the PK for those
-lookups; the extra indexes only cost write time. **Fix:** remove both from
-the schema.
+Still true. An institution page now makes 15 database round trips;
+`getInstitutionTimeSeries` (`queries.ts:89-123`) fetches every year of
+`institution_years` and of `faculty`, and the page reads neither.
+`getInstitution` (`:80-87`) fetches every year's row to use the newest.
 
-### C8. Stored data nobody reads
+**Proposed (safe):** drop the `institution` and `faculty` entries from
+`getInstitutionTimeSeries`, and add `.limit(1)` to `getInstitution`. 15 round
+trips become 13, and two of the larger result sets disappear.
 
-> **2026-10-12:** the seven undeclared tables were dropped. `graduation_rates` still has eight columns that `schema.ts` does not define.
+**Proposed (decide): cache the institution page.** Its data changes when the
+ETL runs, about once a year, yet every view re-queries all of it. The bundled
+Next 16.4 docs give the form for a dynamic route outside Cache Components
+(which this project does not enable): a `revalidate` plus an empty
+`generateStaticParams`, so each institution is rendered on first request and
+then served from cache:
 
-- The `faculty` table (67,178 rows, 10 MB) is loaded every run and read by
-  nothing except the wasted fetch in C3.
-- Most columns of `institution_years` (`zip`, `sector`, `iclevel`,
-  `inst_size`, `hbcu`, `tribal`, `ug_offer`, `gr_offer`, `highest_offering`,
-  `carnegie_classification`, `longitude`, `latitude`) and most of
-  `enrollment`, `finance`, `pricing`, `graduation_rates` are loaded but never
-  shown. That's reasonable for a warehouse you intend to chart later — the
-  point is only that the A1 bug hid in exactly this unread data.
-- **Seven tables exist in the database but not in the repo:** `completers`,
-  `enrollment_12month`, `enrollment_by_race`, `entering_class`,
-  `institution_offerings`, `net_price`, `outcome_measures` (~10 MB together).
-  Nothing in `schema.ts`, the scripts, or git history mentions them. If they
-  are leftovers, note that `drizzle-kit push` will offer to drop them; if
-  they belong to in-progress work, the schema for them isn't committed.
-  (There are also empty auth tables — `user`, `session`, `account`,
-  `organization`, … — that look like Neon Auth scaffolding.)
+```ts
+export const revalidate = 3600; // same reasoning as /compare
+export function generateStaticParams() {
+  return [];
+}
+```
 
-### C9. `npm run lint` fails with 31 errors — confirmed
+The trade-off is the one `/compare` already accepts: after a re-load, a page
+can show the old numbers for up to an hour. Worth doing if page speed
+matters to you now; harmless to leave.
 
-All are `@typescript-eslint/no-explicit-any` in `scripts/etl/` (26 in
-`load-year.ts`, 3 in `materialize.ts`, 2 in `upsert.ts`). `src/` is clean.
-**Fix:** either give the ETL rows a `Record<string, unknown>` type (which
-would also have surfaced A1 if paired with a checked accessor), or exclude
-`scripts/` in `eslint.config.mjs` — whichever, so that lint is usable as a
-signal again.
+### C4. The `"other"` institution type is dead everywhere — safe
 
-### C10. Packages and files — confirmed by grep
+Still true: 0 rows in any year, and the scope rules say there must be none.
 
-- `d3`, `@types/d3` and `zod` are in `package.json` and imported nowhere.
-- `adm-zip` and `mdb-reader` are ETL-only but listed under `dependencies`, so
-  they ship in the deployed install; `dotenv`/`tsx` are already dev-only.
-- `public/file.svg`, `globe.svg`, `next.svg`, `vercel.svg`, `window.svg` —
-  create-next-app leftovers, referenced nowhere.
-- `scripts/explore-dict.mjs` is a strict subset of `scripts/dict-ci.mjs`
-  (same lookup, case-sensitive). Both, and `explore-columns.mjs`, hardcode
-  `varTable23`, so they only work on the 2023 file, and none are mentioned in
-  the README.
-- `next.config.ts` is the empty template.
-- `README.md` lines 1 and 58-70 are create-next-app boilerplate around the
-  real project documentation.
+**Proposed:**
 
-### C11. Small redundancies in the scripts — by reading
+- `src/lib/institution-types.ts`: remove `"other"` from `INSTITUTION_TYPES`,
+  and its entries in the label and colour maps.
+- `src/app/compare/page.tsx:13`: `TYPES` becomes just `INSTITUTION_TYPES`.
+- `src/app/institutions/page.tsx:71`: drop `.filter((t) => t !== "other")`.
+- `scripts/etl/materialize.ts:80, 133`: drop the two
+  `institution_type in (…)` filters.
+- `scripts/etl/load-year.ts:165`: `institutionType()` can still *return*
+  `"other"` for a degree-granting institution flagged as offering neither
+  undergraduate nor graduate programmes. Rather than store it, skip the
+  institution and log it:
+  `!! 2024: 2 institutions skipped — degree-granting but no UG or grad offering`.
+  Skipping, not throwing: one odd HD row should not abort a whole year.
 
-- `DEFAULT_YEAR` is defined twice with a "must match" comment
-  (`queries.ts:27`, `materialize.ts:25`). Move it to one module both import.
-- `materialize.ts:52-56` queries all years just to log "materializing for
-  years: 2010 … 2024", which is misleading — only `nationwide_trends` uses
-  them all.
-- `for (const year of [DEFAULT_YEAR])` plus running totals
-  (`materialize.ts:93-94, 211-212, 204, 321`) are left over from the all-years
-  version; a plain block would read more honestly.
-- `load-year.ts:42` does `await import("fs/promises")` though `readdir` is
-  already statically imported from it on line 5.
-- `upsert.ts:1-2` imports from `drizzle-orm` twice.
-- `NationwideTrendRow` and the field-by-field copy in `getNationwideTrends`
-  (`queries.ts:116-143`) duplicate the Drizzle row type; only the
-  `institutionType` narrowing adds anything.
+### C5. Unused exports and constants — safe
+
+Re-checked. Two changes since the review: `CHART_INK.textSecondary` is now
+unused as well (the scatter was its only user), and `CONTROL_LABELS` still
+carries `3: "Private for-profit"`, which the for-profit rule makes
+unreachable.
+
+**Proposed:**
+
+- Delete `SECTOR_LEVEL_LABELS`, `CHART_INK.surface`, `CHART_INK.textSecondary`.
+- Delete the `3:` entry from `CONTROL_LABELS`, and replace the nested ternary
+  at `institutions/page.tsx:110` with `CONTROL_LABELS[r.control] ?? "—"`.
+- Add one helper beside the label map and use it in the three places that
+  repeat the cast (`compare/page.tsx:34`, `institutions/page.tsx:107`,
+  `[unitid]/page.tsx:30`):
+
+```ts
+export function institutionTypeLabel(type: string) {
+  return INSTITUTION_TYPE_LABELS[type as InstitutionType] ?? type;
+}
+```
+
+### C6. Fonts and CSS that are loaded but never applied — decide
+
+> **Done 2026-10-13:** Geist removed, along with the unused `@theme` block. The site looks as it did.
+
+Still true: no element uses `font-sans`, `font-mono`, `bg-background` or
+`text-foreground`, and `body` sets `font-family: system-ui, …`
+(`globals.css:55`).
+
+**Proposed: keep the look the site has today and remove Geist.** Delete the
+two `next/font` loaders and the `className` variables in `layout.tsx`, and the
+whole `@theme inline` block in `globals.css` (all four of its lines are then
+unused). The site renders exactly as it does now and stops downloading two
+font families.
+
+**Alternative:** delete `globals.css:55` instead, which switches the whole
+site to Geist. That is a visible change, so it is your call; say so and I
+will do that one instead.
+
+The spare palette variables (`--series-4` to `--series-8`) stay: they are the
+documented categorical order, and removing them would only have to be undone
+when a chart needs a fourth series.
+
+### C7. Redundant indexes — safe, data
+
+> **Done 2026-10-13:** `academic_similarity_unitid_year_idx` dropped and removed from the schema; the other went with the `peer_network` table.
+
+Still true: `peer_network_unitid_year_idx` (2.0 MB) and
+`academic_similarity_unitid_year_idx` (2.8 MB, doubled since the table went
+60 deep) duplicate the leading columns of their primary keys.
+
+**Proposed:** remove both `index(…)` lines from `schema.ts` and run
+
+```sql
+drop index academic_similarity_unitid_year_idx;
+drop index peer_network_unitid_year_idx;  -- moot if C2 drops the table
+```
+
+directly rather than through `drizzle-kit push`. **Do not use `push` until C8
+is settled:** it compares the whole schema, and would also offer to drop the
+seven undeclared `graduation_rates` columns below.
+
+### C8. Stored data nobody reads — decide, data
+
+> **2026-10-13:** the seven undeclared `graduation_rates` columns were dropped, so `drizzle-kit push` is safe to use again. The cache clean-up is still open.
+
+Re-checked, with two corrections and one new finding.
+
+- **Undeclared columns (correction: seven, not eight).** `graduation_rates`
+  has `bachelor_rate_200pct`, `less_than_4yr_rate_100pct`, `…_150pct`,
+  `…_200pct`, `pell_adjusted_cohort`, `subsidized_loan_no_pell_grad_rate`,
+  `no_pell_no_loan_grad_rate`, with values in 1,822 of 44,434 rows (2023
+  only). They are not in `schema.ts` and no script writes them — the same
+  one-off experiment as the seven tables already dropped.
+  **Proposed:** drop the seven columns. If any is wanted, the alternative is
+  to add it to the schema and the loader so it is filled for every year.
+- **`faculty`** (51,661 rows, 11 MB) is still read by nothing once C3 lands,
+  but since the A1 fix it holds real salary data for all 15 years.
+  **Proposed:** keep loading it; it is cheap and is plausible page content.
+- **New — the download cache is 9.3 GB and the disk is 88% full** (2.6 GB
+  free of 21 GB). The zips are 1 GB; the other 8.3 GB is the extracted Access
+  files, which are only needed while a year is loading.
+  **Proposed:** have `load-year.ts` delete a year's extracted folder after
+  that year loads successfully, keeping the zip. A re-load then re-extracts
+  (seconds per year) instead of re-downloading. This frees about 8 GB now and
+  keeps it from growing by ~600 MB per future year.
+- The unread columns in `institution_years`, `enrollment`, `finance`,
+  `pricing` and `graduation_rates` stay — that is what a warehouse is for.
+  The nine empty tables in the separate `neon_auth` schema are Neon Auth
+  scaffolding, not this project's, and are left alone.
+
+### C9. `npm run lint` fails — safe
+
+Now 32 errors, all `no-explicit-any` in `scripts/etl/`; `src/` is clean.
+
+**Proposed: turn that one rule off for the ETL scripts** in
+`eslint.config.mjs`, so lint passes and means something again:
+
+```js
+{
+  files: ["scripts/**"],
+  rules: { "@typescript-eslint/no-explicit-any": "off" },
+},
+```
+
+The original note suggested typing the rows instead, on the grounds that it
+would have caught the A1 casing bug. That job is now done at run time by
+`strictRow`, which catches more (it knows the real columns of each table,
+which a type cannot). Typing 30-odd call sites would add work and a full
+re-load to verify, for no further protection.
+
+### C10. Packages and files — safe
+
+Still true throughout.
+
+**Proposed:**
+
+- `npm uninstall d3 @types/d3 zod` — imported nowhere.
+- Move `adm-zip` and `mdb-reader` to `devDependencies` — only the ETL scripts
+  use them. (Vercel installs dev dependencies for the build, and nothing at
+  run time imports them.)
+- Delete `public/file.svg`, `globe.svg`, `next.svg`, `vercel.svg`,
+  `window.svg`.
+- Delete `scripts/explore-dict.mjs` (a case-sensitive subset of
+  `dict-ci.mjs`). In `dict-ci.mjs`, find the dictionary table by pattern
+  instead of the hardcoded `varTable23`, so it works on any year's file:
+  `reader.getTableNames().find((n) => /^vartable\d\d$/i.test(n))`.
+- `README.md`: remove the create-next-app boilerplate (line 1 and the "Learn
+  More" / "Deploy on Vercel" sections from line 58), and add two lines on the
+  `scripts/explore-*.mjs` / `dict-ci.mjs` helpers.
+- `next.config.ts` stays as it is; an empty config is the normal form.
+
+### C11. Small redundancies in the scripts — safe
+
+Re-checked; the dynamic `import("fs/promises")` was already removed with B5.
+
+**Proposed:**
+
+- **One `DEFAULT_YEAR`.** Move it (and `academicYearLabel`) to a new
+  `src/lib/default-year.ts` that both `src/db/queries.ts` and
+  `scripts/etl/materialize.ts` import. It cannot simply be imported from
+  `queries.ts`, which opens a database connection on import.
+- `materialize.ts:56-61`: delete the query that lists every year just to log
+  it; log `materializing nationwide_trends (all years) and similarity for
+  ${DEFAULT_YEAR}` instead.
+- `materialize.ts:99, 217`: replace `for (const year of [DEFAULT_YEAR])` and
+  the running totals with plain blocks using `DEFAULT_YEAR`.
+- `upsert.ts:1-2`: merge the two `drizzle-orm` imports.
+- `queries.ts:125-152`: replace the hand-written `NationwideTrendRow` and the
+  field-by-field copy with the row type Drizzle already infers, narrowing
+  only `institutionType`.
+
+### Suggested grouping
+
+1. **One commit, no decisions:** C1, C3 (safe part), C4, C5, C9, C10, C11.
+   Delete-only or mechanical; verified by typecheck, lint, and loading the
+   three pages.
+2. **Decide, then one commit each:** C2 (drop `peer_network`), C6 (fonts),
+   C3 (cache the institution page).
+3. **Database:** C7 (two indexes) and C8 (seven columns) together, then C8's
+   cache clean-up.
 
 ---
 

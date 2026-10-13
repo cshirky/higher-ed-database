@@ -10,6 +10,16 @@ function byYear<T extends { year: number }>(rows: T[]): Record<string, unknown>[
   return rows;
 }
 
+// Each institution is rendered on its first visit and then cached until the
+// data changes — scripts/etl/materialize.ts ends by calling /api/revalidate —
+// rather than re-running a dozen queries per view for figures that move once a
+// year. The empty generateStaticParams is what lets a dynamic route be cached
+// at run time without listing every institution at build.
+export const revalidate = false;
+export function generateStaticParams() {
+  return [];
+}
+
 export default async function InstitutionPage({ params }: { params: Promise<{ unitid: string }> }) {
   const { unitid: unitidParam } = await params;
   // Digits only, and few enough to fit a Postgres integer: anything else is not

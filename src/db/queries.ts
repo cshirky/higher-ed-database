@@ -9,10 +9,8 @@ import {
   graduationRates,
   finance,
   pricing,
-  faculty,
   financialAid,
   nationwideTrends,
-  peerNetwork,
   academicSimilarity,
   completionsByField,
 } from "./schema";
@@ -22,8 +20,7 @@ import {
 //
 // 2024 is IPEDS's provisional 2024-25 release, which does not yet include the
 // IC (pricing) or SFA (financial aid) components — so there are no 2024 rows in
-// those two tables, and peer_network's tuition dimension drops out for this
-// year. Everything else has full 2024 coverage. Bumping this constant requires
+// those two tables. Everything else has full 2024 coverage. Bumping this constant requires
 // re-running scripts/etl/materialize.ts, which must use the same value.
 export const DEFAULT_YEAR = 2024;
 
@@ -82,42 +79,37 @@ export async function getInstitution(unitid: number) {
     .select()
     .from(institutionYears)
     .where(eq(institutionYears.unitid, unitid))
-    .orderBy(desc(institutionYears.year));
+    .orderBy(desc(institutionYears.year))
+    .limit(1);
   return rows[0] ?? null;
 }
 
 export async function getInstitutionTimeSeries(unitid: number) {
   const [
-    institutionRows,
     admissionsRows,
     enrollmentRows,
     completionsRows,
     graduationRows,
     financeRows,
     pricingRows,
-    facultyRows,
     financialAidRows,
   ] = await Promise.all([
-    db.select().from(institutionYears).where(eq(institutionYears.unitid, unitid)).orderBy(asc(institutionYears.year)),
     db.select().from(admissions).where(eq(admissions.unitid, unitid)).orderBy(asc(admissions.year)),
     db.select().from(enrollment).where(eq(enrollment.unitid, unitid)).orderBy(asc(enrollment.year)),
     db.select().from(completions).where(eq(completions.unitid, unitid)).orderBy(asc(completions.year)),
     db.select().from(graduationRates).where(eq(graduationRates.unitid, unitid)).orderBy(asc(graduationRates.year)),
     db.select().from(finance).where(eq(finance.unitid, unitid)).orderBy(asc(finance.year)),
     db.select().from(pricing).where(eq(pricing.unitid, unitid)).orderBy(asc(pricing.year)),
-    db.select().from(faculty).where(eq(faculty.unitid, unitid)).orderBy(asc(faculty.year)),
     db.select().from(financialAid).where(eq(financialAid.unitid, unitid)).orderBy(asc(financialAid.year)),
   ]);
 
   return {
-    institution: institutionRows,
     admissions: admissionsRows,
     enrollment: enrollmentRows,
     completions: completionsRows,
     graduationRates: graduationRows,
     finance: financeRows,
     pricing: pricingRows,
-    faculty: facultyRows,
     financialAid: financialAidRows,
   };
 }
@@ -149,43 +141,6 @@ export async function getNationwideTrends(): Promise<NationwideTrendRow[]> {
     avgGradRate: r.avgGradRate,
     avgInstructionExpense: r.avgInstructionExpense,
   }));
-}
-
-// peer_network and academic_similarity are both (unitid, year, rank, peer_unitid,
-// distance) — shared shape, so one helper reads either.
-function peersFromTable(
-  table: typeof peerNetwork | typeof academicSimilarity,
-  unitid: number,
-  year: number,
-  limit: number,
-) {
-  return db
-    .select({
-      unitid: table.peerUnitid,
-      distance: table.distance,
-      name: institutionYears.name,
-      state: institutionYears.state,
-      institutionType: institutionYears.institutionType,
-    })
-    .from(table)
-    .innerJoin(institutionYears, and(eq(institutionYears.unitid, table.peerUnitid), eq(institutionYears.year, table.year)))
-    .where(and(eq(table.unitid, unitid), eq(table.year, year)))
-    .orderBy(asc(table.rank))
-    .limit(limit);
-}
-
-export async function getPeers(unitid: number, year = DEFAULT_YEAR, limit = 12) {
-  // Precomputed by scripts/etl/materialize.ts — see .claude/skills/precompute-over-live-query.
-  // Overall-profile similarity: IPEDS has no institution-to-institution relationship
-  // data, so this is a derived nearest-neighbor graph over a handful of
-  // z-normalized metrics (enrollment, admit rate, tuition, instructional spending),
-  // restricted to the same institution_type.
-  return peersFromTable(peerNetwork, unitid, year, limit);
-}
-
-export async function getAcademicPeers(unitid: number, year = DEFAULT_YEAR, limit = 12) {
-  // Academic-program similarity — see .claude/skills/academic-similarity.
-  return peersFromTable(academicSimilarity, unitid, year, limit);
 }
 
 export type AcademicPeer = {
@@ -290,9 +245,10 @@ export async function getAcademicPeerComparison(
       )
       .leftJoin(enrollment, and(eq(enrollment.unitid, institutionYears.unitid), eq(enrollment.year, institutionYears.year)))
       .where(and(eq(institutionYears.year, year), inArray(institutionYears.unitid, ids))),
-    // Pricing falls back one year, as peer_network's inputs do in
-    // materialize.ts: a provisional release ships without the IC component, so
-    // the newest year has no pricing rows at all (see DEFAULT_YEAR above).
+    // Pricing falls back one year: a provisional release ships without the IC
+    // component, so the newest year has no pricing rows at all (see
+    // DEFAULT_YEAR above). One year only — a figure two years stale misleads
+    // more than a missing one.
     db
       .select()
       .from(pricing)
