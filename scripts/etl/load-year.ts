@@ -1,8 +1,8 @@
 import { config } from "dotenv";
 config({ path: ".env.local" });
 
-import { existsSync, mkdirSync, readFileSync } from "fs";
-import { readdir } from "fs/promises";
+import { existsSync, mkdirSync, readFileSync, renameSync, rmSync } from "fs";
+import { readdir, writeFile } from "fs/promises";
 import path from "path";
 import AdmZip from "adm-zip";
 import MDBReader from "mdb-reader";
@@ -17,32 +17,76 @@ function pad2(n: number) {
   return String(n % 100).padStart(2, "0");
 }
 
-function zipInfoForYear(year: number) {
-  const isProvisional = year >= 2024;
+type Release = "Final" | "Provisional";
+
+function releaseInfo(year: number, release: Release) {
   const label = `${year}-${pad2(year + 1)}`;
-  const status = isProvisional ? "Provisional" : "Final";
   return {
-    url: `https://nces.ed.gov/ipeds/tablefiles/zipfiles/IPEDS_${label}_${status}.zip`,
-    zipPath: path.join(CACHE_DIR, `IPEDS_${label}_${status}.zip`),
-    extractDir: path.join(CACHE_DIR, `${year}`),
+    url: `https://nces.ed.gov/ipeds/tablefiles/zipfiles/IPEDS_${label}_${release}.zip`,
+    zipPath: path.join(CACHE_DIR, `IPEDS_${label}_${release}.zip`),
+    // The release is part of the directory name as it is of the zip's, so a
+    // year's Final never reuses a Provisional extraction made earlier.
+    extractDir: path.join(CACHE_DIR, `${year}-${release}`),
   };
+}
+
+function isCached(year: number, release: Release) {
+  const { zipPath, extractDir } = releaseInfo(year, release);
+  return existsSync(extractDir) || existsSync(zipPath);
+}
+
+/**
+ * Which release of a year to load. NCES publishes a year as Provisional and
+ * replaces it with Final about a year later — and keeps serving the
+ * Provisional file afterwards, so Final has to be preferred explicitly rather
+ * than taking whichever exists. A cached Final settles it without a request;
+ * otherwise the server is asked (it answers a clean 404 for a release that is
+ * not out yet).
+ */
+async function resolveRelease(year: number): Promise<Release> {
+  if (isCached(year, "Final")) return "Final";
+
+  let finalStatus: number | null = null;
+  try {
+    finalStatus = (await fetch(releaseInfo(year, "Final").url, { method: "HEAD" })).status;
+  } catch {
+    // Offline or NCES unreachable: handled below with whatever is cached.
+  }
+  if (finalStatus === 200) return "Final";
+
+  if (finalStatus !== 404) {
+    // Could not tell whether a Final exists. Carry on with a cached
+    // Provisional rather than fail a run that needs no download.
+    if (!isCached(year, "Provisional")) {
+      throw new Error(`could not reach NCES to find the ${year} release (status ${finalStatus ?? "none"})`);
+    }
+    console.warn(`  !! ${year}: could not check NCES for a Final release; using the cached PROVISIONAL one`);
+    return "Provisional";
+  }
+  console.log(`  ${year}: using PROVISIONAL release (no Final published yet)`);
+  return "Provisional";
 }
 
 async function ensureAccdb(year: number): Promise<string> {
   mkdirSync(CACHE_DIR, { recursive: true });
-  const { url, zipPath, extractDir } = zipInfoForYear(year);
+  const { url, zipPath, extractDir } = releaseInfo(year, await resolveRelease(year));
 
   if (!existsSync(extractDir)) {
-    mkdirSync(extractDir, { recursive: true });
+    // Download and extract under temporary names and rename on success, so an
+    // interrupted run leaves nothing that the checks above mistake for a
+    // finished file.
     if (!existsSync(zipPath)) {
       console.log(`  downloading ${url}`);
       const res = await fetch(url);
       if (!res.ok) throw new Error(`download failed: ${res.status} ${res.statusText}`);
-      const buf = Buffer.from(await res.arrayBuffer());
-      await import("fs/promises").then((fs) => fs.writeFile(zipPath, buf));
+      await writeFile(`${zipPath}.part`, Buffer.from(await res.arrayBuffer()));
+      renameSync(`${zipPath}.part`, zipPath);
     }
     console.log(`  extracting ${zipPath}`);
-    new AdmZip(zipPath).extractAllTo(extractDir, true);
+    const partial = `${extractDir}.tmp`;
+    rmSync(partial, { recursive: true, force: true });
+    new AdmZip(zipPath).extractAllTo(partial, true);
+    renameSync(partial, extractDir);
   }
 
   const accdb = await findAccdb(extractDir);
@@ -446,9 +490,14 @@ async function main() {
     console.error("usage: tsx scripts/etl/load-year.ts <year> [year2 year3 ...]");
     process.exit(1);
   }
+  const invalid = args.filter((arg) => !/^\d{4}$/.test(arg));
+  if (invalid.length > 0) {
+    console.error(`not a four-digit year: ${invalid.join(", ")}`);
+    process.exit(1);
+  }
   const failed: number[] = [];
   for (const arg of args) {
-    const year = parseInt(arg, 10);
+    const year = Number(arg);
     try {
       await loadYear(year);
     } catch (err) {
@@ -458,6 +507,8 @@ async function main() {
   }
   if (failed.length > 0) {
     console.log(`\nCompleted with failures for years: ${failed.join(", ")}`);
+    // Non-zero so a chained materialize.ts does not run over a partial load.
+    process.exitCode = 1;
   } else {
     console.log(`\nAll years completed successfully.`);
   }
