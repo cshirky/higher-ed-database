@@ -13,8 +13,13 @@ const geistMono = Geist_Mono({
   subsets: ["latin"],
 });
 
+// Where this build is being served from, so that tabs for the same page on
+// different hosts can be told apart at a glance. Vercel and GitHub Actions
+// each set their variable during the build; anything else is a local run.
+const HOST_PREFIX = process.env.VERCEL ? "VRC" : process.env.GITHUB_ACTIONS ? "GTH" : "LCL";
+
 export const metadata: Metadata = {
-  title: "Higher-Ed Database",
+  title: `${HOST_PREFIX}: Higher-Ed Database`,
   description: "Explore IPEDS data on colleges, universities, and graduate schools",
 };
 
