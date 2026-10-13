@@ -12,7 +12,10 @@ function byYear<T extends { year: number }>(rows: T[]): Record<string, unknown>[
 
 export default async function InstitutionPage({ params }: { params: Promise<{ unitid: string }> }) {
   const { unitid: unitidParam } = await params;
-  const unitid = parseInt(unitidParam, 10);
+  // Digits only, and few enough to fit a Postgres integer: anything else is not
+  // an id, and would otherwise reach the database and come back as a 500.
+  if (!/^\d{1,9}$/.test(unitidParam)) notFound();
+  const unitid = Number(unitidParam);
   const institution = await getInstitution(unitid);
   if (!institution) notFound();
 

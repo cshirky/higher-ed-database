@@ -45,7 +45,10 @@ export async function searchInstitutions(params: InstitutionSearchParams) {
   const pageSize = params.pageSize ?? 25;
 
   const conditions = [eq(institutionYears.year, DEFAULT_YEAR)];
-  if (params.q) conditions.push(ilike(institutionYears.name, `%${params.q}%`));
+  // % and _ are LIKE wildcards; escape them (backslash is Postgres's default
+  // escape character) so a search for "a_m" does not match every "ama".
+  const q = params.q?.trim();
+  if (q) conditions.push(ilike(institutionYears.name, `%${q.replace(/[\\%_]/g, "\\$&")}%`));
   if (params.state) conditions.push(eq(institutionYears.state, params.state));
   if (params.institutionType) conditions.push(eq(institutionYears.institutionType, params.institutionType));
 

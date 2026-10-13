@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { redirect } from "next/navigation";
 import { searchInstitutions, getStateList, DEFAULT_YEAR, academicYearLabel } from "@/db/queries";
 import { INSTITUTION_TYPE_LABELS, INSTITUTION_TYPES } from "@/lib/institution-types";
 
@@ -8,7 +9,9 @@ export default async function InstitutionsPage({
   searchParams: Promise<{ q?: string; state?: string; type?: string; page?: string }>;
 }) {
   const params = await searchParams;
-  const page = params.page ? parseInt(params.page, 10) : 1;
+  // Anything that is not a whole page number from 1 up is treated as page 1.
+  const requestedPage = Number(params.page);
+  const page = Number.isInteger(requestedPage) && requestedPage >= 1 ? requestedPage : 1;
 
   const [{ rows, total, pageSize }, states] = await Promise.all([
     searchInstitutions({
@@ -28,6 +31,9 @@ export default async function InstitutionsPage({
     for (const [k, v] of Object.entries(merged)) if (v) next.set(k, v);
     return `/institutions?${next.toString()}`;
   }
+
+  // A page past the end goes to the last real page rather than an empty table.
+  if (page > totalPages) redirect(pageHref({ page: String(totalPages) }));
 
   return (
     <div className="mx-auto w-full max-w-5xl px-6 py-12">
