@@ -12,11 +12,12 @@ import {
 } from "recharts";
 import { CHART_INK } from "@/lib/colors";
 import type { SimilarityPoint } from "@/db/queries";
+import { selectivityGap } from "@/lib/selectivity";
 
 // There is no legend and no label on the target, by request, so the caption
 // under the plot is the only statement of what the encodings mean, and the
-// target is told apart by its outline (every other cue it has — pale green,
-// its shape — a peer can share). The table and tooltip give every value in text.
+// target is told apart by its detached outer outline (every other cue it has
+// — pale green, its shape, a grey border — a peer can share). The table and tooltip give every value in text.
 //
 // Colour is cost relative to the target: the target sits at pale green, a
 // costlier peer deepens toward full green, a cheaper one shifts toward blue.
@@ -28,6 +29,24 @@ const COST_SAME = "color-mix(in oklab, var(--series-2) 40%, white)";
 const COST_UNKNOWN = "var(--baseline)";
 /** Cost difference, as a share of the target's, at which a mark reaches its full hue. */
 const FULL_HUE_COST_GAP = 0.5;
+
+// The border is selectivity relative to the target, on hues the cost fill does
+// not use: dark grey at parity, toward orange the more selective a peer is,
+// toward violet the less. It is on the border, not the glyph, because every
+// mark has a border while only differently-sized schools have a glyph — and
+// because no one glyph colour stays legible across fills that run from pale
+// green to deep green to blue.
+const MORE_SELECTIVE = "var(--series-6)";
+const LESS_SELECTIVE = "var(--series-7)";
+const SAME_SELECTIVITY = "var(--text-secondary)";
+const SELECTIVITY_UNKNOWN = "var(--baseline)";
+/**
+ * Gap at which a border reaches its full hue: half a step, about 11 admit-rate
+ * points or 80 SAT points. Academic peers are close in selectivity by
+ * construction, so saturating at a whole step would leave nearly all of them grey.
+ */
+const FULL_HUE_SELECTIVITY_GAP = 0.5;
+const BORDER_WIDTH = 3;
 
 // The size glyphs sit on the fills above, all of which are light enough to
 // carry dark ink in both colour schemes — so this is fixed, not a text token.
@@ -51,6 +70,9 @@ type Datum = {
   /** Cost relative to the target's (1.2 = 20% more); null when either is unknown. */
   costRatio: number | null;
   sizeGlyph: string | null;
+  /** Selectivity relative to the target, in steps (see selectivityGap); 0 on the target. */
+  selectivity: number | null;
+  border: string;
 };
 
 const pct = (v: number) => `${Math.round(v)}%`;
@@ -61,6 +83,12 @@ function costColor(ratio: number | null): string {
   if (ratio == null) return COST_UNKNOWN;
   const strength = Math.round(Math.min(1, Math.abs(ratio - 1) / FULL_HUE_COST_GAP) * 100);
   return `color-mix(in oklab, ${ratio > 1 ? COST_HIGHER : COST_LOWER} ${strength}%, ${COST_SAME})`;
+}
+
+function selectivityColor(gap: number | null): string {
+  if (gap == null) return SELECTIVITY_UNKNOWN;
+  const strength = Math.round(Math.min(1, Math.abs(gap) / FULL_HUE_SELECTIVITY_GAP) * 100);
+  return `color-mix(in oklab, ${gap > 0 ? MORE_SELECTIVE : LESS_SELECTIVE} ${strength}%, ${SAME_SELECTIVITY})`;
 }
 
 /**
@@ -163,6 +191,9 @@ function Tip({ active, payload }: { active?: boolean; payload?: { payload: Datum
       </div>
       <div className="text-[var(--text-secondary)]">
         Admit rate {orDash(p.admitRate, pct)} · Test score {orDash(p.satIndex, (v) => Math.round(v).toLocaleString())}
+        {!p.isTarget &&
+          d.selectivity != null &&
+          ` · ${Math.abs(d.selectivity) < 0.1 ? "About as selective" : d.selectivity > 0 ? "More selective" : "Less selective"}`}
       </div>
     </div>
   );
@@ -188,20 +219,27 @@ function Mark({ cx, cy, payload }: MarkProps) {
   const diamond = point.control === 1;
   return (
     <g transform={`translate(${cx},${cy})`}>
-      {/* 2px surface ring keeps overlapping marks separable. */}
+      {/* Surface halo outside the border keeps overlapping marks separable. */}
       <Outline
         diamond={diamond}
         r={MARK_RADIUS}
+        fill="none"
         stroke="var(--surface)"
-        strokeWidth={2}
+        strokeWidth={BORDER_WIDTH + 4}
         strokeLinejoin="round"
-        style={{ fill: payload.fill }}
+      />
+      <Outline
+        diamond={diamond}
+        r={MARK_RADIUS}
+        strokeWidth={BORDER_WIDTH}
+        strokeLinejoin="round"
+        style={{ fill: payload.fill, stroke: payload.border }}
       />
       {/* The target's only unshared cue, now that it has no label or legend. */}
       {point.isTarget && (
         <Outline
           diamond={diamond}
-          r={MARK_RADIUS + 3}
+          r={MARK_RADIUS + 5}
           fill="none"
           stroke="var(--foreground)"
           strokeWidth={1.5}
@@ -294,10 +332,13 @@ export function SimilarityScatter({ points }: { points: SimilarityPoint[] }) {
     if (p.yieldTotal == null || p.gradRateTotal == null || !targetPoint) continue;
     const costRatio =
       targetPoint.costOfAttendance && p.costOfAttendance ? p.costOfAttendance / targetPoint.costOfAttendance : null;
+    const selectivity = p.isTarget ? 0 : selectivityGap(targetPoint, p);
     plottable.push({
       point: p,
       x: p.yieldTotal,
       y: p.gradRateTotal,
+      selectivity,
+      border: selectivityColor(selectivity),
       costRatio,
       fill: costColor(costRatio),
       sizeGlyph: p.isTarget ? null : sizeGlyph(sizeRatio(targetPoint, p)),
@@ -392,9 +433,11 @@ export function SimilarityScatter({ points }: { points: SimilarityPoint[] }) {
       </div>
 
       <p className="mt-2 text-xs text-[var(--text-muted)]">
-        The outlined mark is this institution. Colour is cost of attendance against it: greener costs
-        more, bluer costs less. Diamonds are public, circles private. &gt; and &gt;&gt; mark a larger
-        and a much larger student body, &lt; and &lt;&lt; a smaller and a much smaller one.
+        The mark with the outer outline is this institution. Fill is cost of attendance against it:
+        greener costs more, bluer costs less. Border is selectivity against it (admit rate and test
+        scores): orange is more selective, violet less, grey about the same. Diamonds are public,
+        circles private. &gt; and &gt;&gt; mark a larger and a much larger student body, &lt; and
+        &lt;&lt; a smaller and a much smaller one.
       </p>
       <p className="mt-1 text-xs text-[var(--text-muted)]">Axes are windowed to the institutions shown, not 0–100%.</p>
 

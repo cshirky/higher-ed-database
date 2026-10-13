@@ -1,4 +1,5 @@
-// A single test score per institution, for showing beside admit rate.
+// Selectivity as the peer scatter uses it: admit rate and an SAT-indexed test
+// score, compared between two institutions rather than scored on its own.
 
 // ACT composite → SAT total, from the 2018 ACT/College Board concordance. This
 // is what puts a school that reports only ACT on the same scale as one that
@@ -44,4 +45,32 @@ export function satIndex(s: TestScores): number | null {
 
   if (sat != null && actAsSat != null) return (sat + actAsSat) / 2;
   return sat ?? actAsSat;
+}
+
+// What counts as one full step of selectivity on each measure — roughly the
+// national standard deviation among 2024 institutions reporting it (22.8
+// admit-rate points; 155 SAT points). Dividing by these is what lets a
+// percentage and a test score be averaged.
+const ADMIT_RATE_STEP = 23;
+const SAT_STEP = 155;
+
+type Selectivity = { admitRate: number | null; satIndex: number | null };
+
+/**
+ * How much more selective `other` is than `base`: positive when it admits a
+ * smaller share and/or enrols higher scorers, negative when less selective,
+ * in the step units above. Averaged over only the measures BOTH report, so a
+ * test-optional school is judged on admit rate alone rather than treated as
+ * matching on the score it lacks. Null when they share neither.
+ */
+export function selectivityGap(base: Selectivity, other: Selectivity): number | null {
+  const parts: number[] = [];
+  if (base.admitRate != null && other.admitRate != null) {
+    parts.push((base.admitRate - other.admitRate) / ADMIT_RATE_STEP);
+  }
+  if (base.satIndex != null && other.satIndex != null) {
+    parts.push((other.satIndex - base.satIndex) / SAT_STEP);
+  }
+  if (parts.length === 0) return null;
+  return parts.reduce((a, b) => a + b, 0) / parts.length;
 }
