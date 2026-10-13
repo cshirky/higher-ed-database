@@ -172,6 +172,8 @@ prompt and `main()` has no `.catch`, so a failure mid-way exits 0.
 
 ### A10. A failed download permanently poisons the cache directory — by reading
 
+> **Fixed 2026-10-13** together with B5.
+
 `ensureAccdb()` creates `extractDir` *before* downloading
 (`load-year.ts:35-36`). If the fetch or the unzip throws, the empty directory
 remains, and every later run skips the download (`existsSync(extractDir)` is
@@ -203,44 +205,169 @@ skip on the `.accdb` being present rather than the directory.
 
 ## B. Crashes and robustness
 
+> **Concrete proposals added 2026-10-13.** Nothing in this section has been
+> changed yet. Each item now has the exact change proposed, what it was checked
+> against, and anything to decide. Line numbers are as of commit `a2a439e`.
+
 ### B1. Bad URL parameters produce a 500 instead of a 404 / page 1 — confirmed
 
-- `/institutions/abc` → `parseInt` gives `NaN` → Postgres rejects it
-  (`invalid input syntax for type integer: "NaN"`) → error page.
-  `[unitid]/page.tsx:15`. **Fix:** `if (!Number.isInteger(unitid)) notFound()`
-  (and use `/^\d+$/` so `123abc` isn't accepted as 123).
-- `/institutions?page=0`, `page=-3`, `page=abc` → negative or `NaN` offset →
-  `OFFSET must not be negative`. `institutions/page.tsx:11`. **Fix:** clamp to
-  `Math.max(1, …)` with a `NaN` fallback to 1.
-- `page` beyond the last page renders "Page 99 of 5" over an empty table —
-  clamp to `totalPages` or redirect.
+> **Implemented 2026-10-13** as proposed, with the redirect. Verified locally: bad ids → 404, bad page numbers → page 1, a page past the end → 307 to the last page.
 
-### B2. Search treats `%` and `_` as wildcards — by reading
+Re-checked 2026-10-13 against the local server: `/institutions/abc` → 500,
+`/institutions/99999999999` → 500 (new: `value … is out of range for type
+integer`), `/institutions?page=0` → 500, `/institutions?page=9999` → 200 with
+"Page 9999 of 136" over an empty table.
 
-`queries.ts:42` interpolates `q` into an `ILIKE` pattern unescaped (it is
-parameterised, so not an injection risk). Searching `100%` or `a_b` matches
-unintended names. **Fix:** escape `\`, `%`, `_` in `q`.
+**Proposed — institution page** (`src/app/institutions/[unitid]/page.tsx:15`).
+Validate the text before it becomes a number. Nine digits is comfortably
+inside a Postgres `integer` (IPEDS ids are six), and the pattern also rejects
+`123abc`, which `parseInt` silently reads as 123:
 
-### B3. `global-error.tsx` renders unstyled — by reading, confirmed against the Next docs
+```ts
+const { unitid: unitidParam } = await params;
+if (!/^\d{1,9}$/.test(unitidParam)) notFound();
+const unitid = Number(unitidParam);
+```
 
-The bundled Next 16.4 docs state that `global-error` replaces the root layout
-and "does not include your global styles". `src/app/global-error.tsx` relies
-on Tailwind classes and `var(--border)` but imports no CSS, so none of them
-apply. **Fix:** `import "./globals.css"` there.
+**Proposed — browse page** (`src/app/institutions/page.tsx:11`). Anything
+that is not a whole number ≥ 1 becomes page 1:
+
+```ts
+const requested = Number(params.page);
+const page = Number.isInteger(requested) && requested >= 1 ? requested : 1;
+```
+
+and, after the query returns, send a page past the end to the last real page
+rather than rendering an empty one:
+
+```ts
+if (page > totalPages) redirect(pageHref({ page: String(totalPages) }));
+```
+
+(`redirect` from `next/navigation`; `pageHref` has to move above this line.)
+
+**To decide:** redirect, as above, or silently show the last page under the
+out-of-range URL. Redirect keeps the address bar honest and costs one extra
+round trip only for a bad link; I'd redirect.
+
+Not a problem, checked: a repeated parameter (`?state=NY&state=CA`) returns
+200.
+
+### B2. Search treats `%` and `_` as wildcards — confirmed
+
+> **Implemented 2026-10-13:** escape and trim. The 100-character cap was not requested and is not included.
+
+Checked against the database: `a_m` currently matches 69 institutions in 2024
+(any one character between an `a` and an `m`, as in "Alab**ama**") and 0 once the
+underscore is escaped, which is the right answer since no name contains a
+literal `a_m`.
+
+**Proposed** (`src/db/queries.ts:48`). Backslash is Postgres's default `LIKE`
+escape character, so no `ESCAPE` clause is needed:
+
+```ts
+const q = params.q?.trim().slice(0, 100);
+if (q) conditions.push(ilike(institutionYears.name, `%${q.replace(/[\\%_]/g, "\\$&")}%`));
+```
+
+The `trim` and the 100-character cap are additions: a search of only spaces
+currently filters on `%   %`, and nothing bounds the length of what is sent to
+the database.
+
+### B3. `global-error.tsx` renders unstyled — confirmed against the Next docs
+
+> **Deferred 2026-10-13** at the user's request.
+
+The bundled Next 16.4 docs (`error.md`) say the global error UI "must define
+its own `<html>` and `<body>` tags, global styles, fonts" and that it does
+"not include your global styles".
+
+**Proposed** (`src/app/global-error.tsx`):
+
+```tsx
+"use client";
+
+import "./globals.css";
+```
+
+and `className="h-full"` on its `<html>`, without which the `min-h-full`
+already on `<body>` has nothing to fill and the message sits at the top of the
+page instead of centred.
+
+**How to test:** this boundary only catches errors thrown by the root layout,
+so the practical check is to add a temporary `throw` to `layout.tsx` in a
+production build (`npm run build && npm start`; dev shows its own overlay
+instead), look, and remove it.
 
 ### B4. `load-year.ts` exits 0 when years fail — by reading
 
-`load-year.ts:432-436` logs "Completed with failures" but doesn't set a
-non-zero exit code, and `parseInt(arg)` (`:424`) isn't validated, so a typo
-becomes `NaN` and a confusing downstream error. **Fix:** `process.exitCode = 1`
-on failure; reject non-numeric arguments up front.
+> **Implemented 2026-10-13:** non-four-digit arguments are rejected up front, and a failed year now sets a non-zero exit code. The missing `.catch` in the two neighbouring scripts is still open.
 
-### B5. Provisional/final status is hardcoded — by reading
+**Proposed** (`scripts/etl/load-year.ts:446-463`). Reject bad arguments before
+any work starts, and report failure through the exit code:
 
-`zipInfoForYear` treats `year >= 2024` as Provisional (`load-year.ts:21`).
-When NCES publishes 2024-25 as Final, the URL changes and the script keeps
-loading the provisional file from cache. **Fix:** try Final first, fall back
-to Provisional, and log which was used.
+```ts
+const years = args.map(Number);
+const bad = args.filter((a) => !/^\d{4}$/.test(a));
+if (bad.length > 0) {
+  console.error(`not a four-digit year: ${bad.join(", ")}`);
+  process.exit(1);
+}
+…
+if (failed.length > 0) {
+  console.log(`\nCompleted with failures for years: ${failed.join(", ")}`);
+  process.exitCode = 1;
+}
+```
+
+Why it matters: the documented routine is `load-year.ts` followed by
+`materialize.ts`. Anyone chaining the two with `&&`, or running them from a
+script, gets a materialize over incomplete data after a partial load, because
+the loader reports success.
+
+Same gap, same one-line fix, in two neighbours: `truncate-all.ts` and
+`sanity-check.ts` call `main()` with no `.catch`, so an error there is an
+unhandled rejection rather than a clean non-zero exit.
+
+### B5. Provisional/final status is hardcoded — confirmed
+
+> **Implemented 2026-10-13**, including the temp-name download and extract from A10. Verified on a real run: 2024 logs `using PROVISIONAL release (no Final published yet)`. Cache folders were renamed in place (`2024-Provisional/`, `2023-Final/` …). The `sanity-check.ts` listing of provisional years was not requested and is not included.
+
+Checked the NCES server 2026-10-13: it returns a clean 404 for a file that
+does not exist (`IPEDS_2024-25_Final.zip` → 404, `IPEDS_2025-26_Provisional.zip`
+→ 404) and 200 for one that does, so the release status can be discovered
+rather than hardcoded. It also keeps both once a year is finalised — 2023-24
+has a Final (94 MB) *and* still a Provisional (76 MB) — so "whichever exists"
+is not enough; Final has to be preferred.
+
+**Proposed** (`zipInfoForYear` / `ensureAccdb`, `load-year.ts:20-51`):
+
+1. Resolve the status per run: use a cached Final if there is one; otherwise
+   ask the server for Final (`fetch(url, { method: "HEAD" })`); otherwise fall
+   back to Provisional. Log which, loudly for Provisional:
+   `2024: using PROVISIONAL release (no Final published yet)`.
+2. Put the status in the extract directory's name (`2024-Provisional/`,
+   `2024-Final/`) as it already is in the zip's. Today both extract to
+   `2024/`, so a cached provisional extraction would be reused forever even
+   after the Final zip is downloaded beside it.
+3. If the HEAD request itself fails (offline), fall back to whatever is
+   cached and say so, rather than failing a run that needs no download.
+
+This is the same function as **A10** (a failed download leaves an empty
+extract directory that blocks every later run), and I would fix both in one
+change: extract into `…​.tmp` and rename on success. That bug was hit for real
+on 2026-10-12, when an interrupted load left an empty `2011/`.
+
+**Consequences to accept:** one small HEAD request per year per run while a
+year is still provisional; and the existing cache directories (`2010/` …
+`2024/`) are re-extracted once under their new names, from zips already on
+disk, so no re-download.
+
+**To decide:** when a Final replaces a Provisional that is already loaded,
+the numbers for that year change. The loader would pick it up on the next run
+of that year, but nothing prompts that run. If you want it noticed, the
+simplest thing is for `sanity-check.ts` to print which years in the cache are
+still provisional.
 
 ---
 
