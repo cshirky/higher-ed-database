@@ -540,6 +540,7 @@ seven undeclared `graduation_rates` columns below.
 ### C8. Stored data nobody reads — decide, data
 
 > **2026-10-13:** the seven undeclared `graduation_rates` columns were dropped, so `drizzle-kit push` is safe to use again. The cache clean-up is still open.
+> **2026-10-14:** cache clean-up done. The fifteen extracted folders were deleted (the 980 MB of zips kept), and `load-year.ts` now removes each year's extracted folder after that year loads successfully. Free disk went from 1.4 GB to 9.1 GB.
 
 Re-checked, with two corrections and one new finding.
 
@@ -641,87 +642,216 @@ Re-checked; the dynamic `import("fs/promises")` was already removed with B5.
 
 ## D. Confusing code and stale documentation
 
-### D1. `/compare` shows each legend twice — by reading
+> **Concrete proposals added 2026-10-13.** Nothing in this section has been
+> changed yet. Every observation was re-checked against commit `b9fda88`, the
+> live database and, for D6, the raw IPEDS files. Two items are now moot, and
+> one turned out to be a real data-loss bug rather than a stale comment (D6).
 
-The page draws its own legend (`compare/page.tsx:44-54`), and every
-`TimeSeriesChart` with more than one series draws Recharts' `<Legend>` too
-(`time-series-chart.tsx:90`) — six more copies of the same three entries.
-**Fix:** add a `showLegend` prop and turn it off on `/compare`.
+### D1. `/compare` shows each legend twice — safe
 
-Also `seriesFor(typeLabel)` (`compare/page.tsx:24-34`) threads a label
-function through as a parameter only to look up `INSTITUTION_TYPE_LABELS[t]`;
-it can be a module-level constant.
+> **Done 2026-10-14.**
 
-### D2. `byYear()` does nothing — by reading
+Still true: the page draws one legend above the grid (`compare/page.tsx:43-53`)
+and each of the six charts draws Recharts' own beneath it
+(`time-series-chart.tsx:91`).
 
-`[unitid]/page.tsx:9-11` is an identity function whose only effect is to
-widen the type to `Record<string, unknown>[]`; the name suggests it groups or
-sorts. **Fix:** loosen `TimeSeriesChart`'s `data` prop type and delete it, or
-rename it to say it's a cast.
+**Proposed:** keep the page's single legend — one key for six charts is the
+better design — and let the page switch the per-chart one off:
 
-### D3. Orphaned comment in the scatter — by reading
+```tsx
+// time-series-chart.tsx
+showLegend = true,
+…
+{showLegend && series.length > 1 && <Legend wrapperStyle={{ fontSize: 12 }} />}
+```
 
-`similarity-scatter.tsx:26-30` explains why animation is off, but floats
-between two unrelated constants, forty lines from the
-`isAnimationActive={false}` props it justifies (`:255, 263`). Move it there.
-Note that `TimeSeriesChart`'s lines still animate (Recharts' default), so the
-screenshot/print problem the comment describes still applies to the other
-ten charts.
+with `showLegend={false}` on the six charts in `compare/page.tsx`. Institution
+pages are unaffected: their charts have different series each, so each needs
+its own.
 
-### D4. `connectNulls` hides missing years — by reading
+In the same file, `seriesFor(typeLabel)` (`:21-31`) passes a label function
+around only to look up a constant. Replace both with one module-level value:
 
-`time-series-chart.tsx:100` draws a straight line across years with no data,
-so a gap (an institution that skipped a survey, the 2010–13 admit-rate hole
-in A11) looks like a measured trend. The dots do mark real points, so this is
-a judgement call — but worth making deliberately.
+```ts
+const SERIES = TYPES.map((t) => ({ key: t, label: INSTITUTION_TYPE_LABELS[t], color: INSTITUTION_TYPE_COLORS[t] }));
+```
 
-### D5. Smaller display rough edges — by reading
+### D2. `byYear()` does nothing — safe
 
-- The "Yield" stat (`[unitid]/page.tsx:30-33`) takes the most recent year
-  that has one, without saying which year.
-- `{r.city}, {r.state}` (`institutions/page.tsx:98`, `[unitid]/page.tsx:43`)
-  would print a bare comma for a null city. No 2024 row has one, so this is
-  latent only.
-- The results table is wrapped in `overflow-hidden`
-  (`institutions/page.tsx:79`), so on a narrow phone the right-hand columns
-  are clipped rather than scrollable — `overflow-x-auto` instead.
-- 1,768 institutions have no 2024 row (closed or merged). Their pages still
-  load by URL and show history, but can't be found through Browse, and their
-  header gives no hint that the data ends in an earlier year.
-- Only 1,756 of 4,090 institutions in 2024 report both yield and graduation
-  rate, so the scatter's text fallback is the common case, not the exception.
-  This is documented as intended; mentioned because it affects how much the
-  chart is worth polishing.
+> **Done 2026-10-14.**
 
-### D6. Comments and docs that no longer match the code — by reading
+Still true (`[unitid]/page.tsx:9-11`, used nine times).
 
-- `institution-types.ts:1` and `schema.ts:13` point to "memory
-  `project-terminology`" / "project memory", which doesn't exist. They should
-  point to `.claude/skills/institution-scope`.
-- `materialize.ts:1-3` says it precomputes "nationwide_trends and
-  peer_network … these two tables" — there are three.
-- `.claude/skills/academic-similarity/SKILL.md`, section "Not yet exposed in
-  the UI", says no page queries `academic_similarity` and that `getPeers()`
-  reads `peer_network`. The opposite is now true.
-- `.claude/skills/precompute-over-live-query/SKILL.md` says `peer_network`
-  "backs the peer-similarity section of `/institutions/[unitid]`". It no
-  longer does (C2).
-- `cleanNum`'s doc comment (`upsert.ts:15`) says it leaves legitimate
-  negatives alone, but it nulls *any* value in (−10, 0) — a real −5% equity
-  ratio would be dropped. Fine for count columns; wrong for
-  `equity_ratio`-style ratios. Either restrict it to the exact integer
-  sentinels or apply it per column.
-- JS `stddev` in `materialize.ts:27-33` is the population formula; SQL
-  `stddev()` used for `peer_network` is the sample formula. Immaterial at
-  n ≈ 2,000 but the two indexes are described as following the same method.
+**Proposed:** delete it and pass the rows straight in
+(`data={series.enrollment}`). Checked: the page compiles without it — the
+rows were already assignable to the chart's `data` type, so it was not even
+doing the cast its body implies.
+
+### D3. Orphaned comment in the scatter — moot; one part still stands
+
+> **Done 2026-10-14:** line animation off. Headless screenshots now show the lines.
+
+The scatter is gone, and with it the comment. What remains is the note at the
+end of the original item: **the lines in every time-series chart still
+animate in**, so anything that captures the page without running the animation
+shows dots with no lines. That is not hypothetical — every headless
+screenshot taken of this site during the review shows exactly that — and it
+would apply to printing and to link-preview images as well.
+
+**Proposed:** `isAnimationActive={false}` on the `<Line>` in
+`time-series-chart.tsx:93-102`. The lines are static data; the half-second
+draw-in buys nothing.
+
+### D4. `connectNulls` hides missing years — decide
+
+> **Done 2026-10-14, the user's way:** a missing year is bridged with a dotted line in the series colour, and the solid line breaks. The chart also now fills in years that have no row at all; before, such a year dropped off the axis entirely and the solid line ran straight across it (found while testing — e.g. a graduation rate reported for 2017 and 2021 only).
+
+Measured: this is not a corner case. Counting institutions with at least one
+missing year *between* two reported ones:
+
+| Series | Institutions | With a gap |
+|---|---|---|
+| Enrollment | 3,829 | 59 |
+| Tuition | 3,377 | 74 |
+| Admit rate (2014 on) | 1,948 | 85 |
+| Graduation rate | 3,360 | 151 |
+
+For those, the chart draws a straight line through years the institution did
+not report, indistinguishable from a measured trend.
+
+**Proposed:** remove `connectNulls` (`time-series-chart.tsx:101`). A missing
+year then shows as a break in the line; the dots on either side still mark the
+real values, and an isolated year still shows as a dot.
+
+**To decide:** this is a judgement call. The case for leaving it is that a
+broken line can read as "the data stopped" at a glance. I would break the
+line: the chart should not draw a value nobody reported.
+
+### D5. Smaller display rough edges — mostly safe
+
+> **Done 2026-10-14** except the departed-institutions note, which is to be discussed after the re-load.
+
+Re-checked; the numbers have moved.
+
+- **Unlabelled yield year.** The "Yield" stat takes the latest year that has
+  one. For 121 of the 1,805 current institutions that show a yield, that is
+  not 2024, and nothing says so. **Proposed:** show the year whenever it is
+  not the current one — `43% (2022-23)` — using `academicYearLabel`.
+- **Bare comma for a missing city.** 29 institution-year rows have no city
+  (none in 2024, so only older pages). **Proposed:**
+  `[city, state].filter(Boolean).join(", ")` in both places
+  (`institutions/page.tsx:104`, `[unitid]/page.tsx:56`).
+- **Browse table clips on a phone.** **Proposed:** `overflow-x-auto` in place
+  of `overflow-hidden` (`institutions/page.tsx:85`), as the peer table already
+  does.
+- **Institutions that have left the data.** 579 institutions (down from 1,768
+  before for-profits were removed) have no 2024 row — closed, merged, or now
+  out of scope. Their pages still load by URL, with an empty majors card and
+  no peers, and nothing explains why. **Proposed:** when the newest row is
+  older than the current year, add one line under the name:
+  `Last reported to IPEDS in 2019-20.`
+  **To decide:** whether such pages should exist at all. They are not
+  reachable from Browse, only from old links or a peer link in an older
+  cached page; a 404 would be the stricter choice. I would keep them with the
+  note — the history is real.
+- The note about the scatter's fallback being the common case is moot; the
+  scatter is gone.
+
+### D6. Comments and docs that no longer match the code
+
+> **Done 2026-10-14.** Stale pointers fixed. `cleanNum`/`cleanInt` replaced by `num`/`int` everywhere and `hdCode` for HD only, after scanning every year 2010-2024: the negative codes occur only in HD (and not in the IC fallback either), while DRVF holds a continuous run of real negatives. Full re-load and materialize run afterwards.
+
+Four of the six are already fixed (the `materialize.ts` header and both skill
+docs, in the `peer_network` removal; the `stddev` mismatch disappeared with
+the SQL it was compared to). Two remain, and one is more than a comment.
+
+**Stale pointers — safe.** `institution-types.ts:1` and `schema.ts:13` refer
+to a "project memory" that does not exist. **Proposed:** point both at
+`.claude/skills/institution-scope`, which is where the classification is
+actually defined.
+
+**`cleanNum` discards real negative values — data bug, confirmed.**
+`upsert.ts:15-22` nulls anything between −10 and 0, on the theory that those
+are IPEDS "not reported" codes. Checked against the raw 2024 files:
+
+- The codes (−1, −2, −3) exist **only in `HD`**, the institution directory,
+  in its categorical columns. The derived tables this project loads from —
+  `DRVEF`, `DRVGR`, `ADM`, `DRVHR` — contain no value in that range at all;
+  they use real nulls.
+- `DRVF` (finance) has 115 values in that range, every one a genuine small
+  negative: an equity ratio of −5%, an investment return of −3%. The loader
+  throws those away. Of the columns actually loaded, `equity_ratio` is the
+  one affected: in the 2024 file, 37 public and nonprofit institutions have a
+  slightly negative equity ratio that is stored as NULL (fewer once out-of-scope
+  ones are excluded; other years not counted), while one at −6,118 is kept.
+
+So the rule drops exactly the mildly-negative values and keeps the extreme
+ones, which is backwards for anyone looking for institutions in trouble.
+
+**Proposed:** make the sentinel rule apply only where sentinels exist.
+
+```ts
+/** Any real number; null only for null, undefined or NaN. For the derived tables, which use real nulls. */
+export function num(v: unknown): number | null { … }
+
+/** A code from HD, where -1 / -2 / -3 mean not reported / not applicable / not available. */
+export function hdCode(v: unknown): number | null { … }
+```
+
+`hdCode` replaces `cleanInt` for the `HD` columns; `num` (and an `int`
+rounding variant) replaces `cleanNum` / `cleanInt` everywhere else.
+**Needs a full re-load** to take effect — quick now that the files are
+cached — and nothing on the site shows `equity_ratio` yet, so there is no
+visible change.
+
+### D7. New: this document's own ending is stale — safe
+
+> **Done 2026-10-14:** see the status table below.
+
+The "Suggested order" section below was written before any of the work
+started and no longer describes what is left. **Proposed:** replace it with a
+short status table (done / open / deferred, one line per item), so the open
+list can be read without scanning forty status notes.
 
 ---
 
-## Suggested order
+## Status
 
-1. **A1, A2, A11** together — all three are `load-year.ts` fixes that need a
-   full re-load, so do them in one pass, then re-materialize.
-2. **A8, A9** before that re-load, so it starts from clean tables.
-3. **A3–A7, B1–B3** — small, independent, user-visible; no data changes.
-4. **C1–C7, C10–C11, D1–D3, D6** — deletions and tidying; low risk.
-5. **C2, C8, D4** — need a decision from you rather than a fix.
+As of 2026-10-14. Each item's own status note has the details.
+
+| Item | Status | What is left |
+|---|---|---|
+| A1 Eleven always-NULL columns | Done | — |
+| A2 "Any grant" was any aid | Done (renamed) | `SCUGRAD` count vs first-time-cohort percentage mismatch |
+| A3 Hardcoded years | Done | — |
+| A4 Degree counts without commas | Done | — |
+| A5 Most/least common majors overlap | Done (least common removed) | — |
+| A6 Uneven scatter ticks | Moot | Scatter replaced by the peer table |
+| A7 Currency decimals | Done | — |
+| A8 Materialized tables never delete | Open | `materialize.ts` still only upserts |
+| A9 `truncate-all.ts` incomplete | Partly done | Confirmation prompt; `.catch` |
+| A10 Failed download blocks later runs | Done | — |
+| A11 Admissions gaps 2010-13, SAT medians | Open | Derive rates from counts; chart 25th-75th; drop all-NULL rows |
+| B1 Bad URLs give 500 | Done | — |
+| B2 Search wildcards | Done | 100-character cap deferred |
+| B3 Unstyled global error page | Deferred | — |
+| B4 Loader arguments and exit code | Done | `.catch` in two neighbouring scripts |
+| B5 Provisional vs Final | Done | Provisional-year listing deferred |
+| C1 Dead query code | Partly done | `pageSize` / `page` tidy-up |
+| C2 `peer_network` | Done (dropped) | — |
+| C3 Wasted queries; caching | Done | Set `REVALIDATE_SECRET` in Vercel — see `TO_DO.md` |
+| C4 Dead "other" type | Open | — |
+| C5 Unused constants | Open | — |
+| C6 Geist fonts | Done (removed) | — |
+| C7 Redundant indexes | Done | — |
+| C8 Unread data | Done | — |
+| C9 Lint fails | Open | — |
+| C10 Packages and files | Open | — |
+| C11 Script redundancies | Open | — |
+| D1 Duplicate legends | Done | — |
+| D2 `byYear()` | Done | — |
+| D3 Chart animation | Done | — |
+| D4 Gaps in lines | Done (dotted) | — |
+| D5 Display rough edges | Done | Pages for institutions that left the data — to discuss |
+| D6 Stale comments; `cleanNum` | Done | — |
+| D7 This table | Done | — |
