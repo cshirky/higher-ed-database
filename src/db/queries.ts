@@ -93,25 +93,17 @@ export type Departure =
 
 /**
  * Why an institution has no row in the current year, from what the loader
- * recorded: a departure from scope (institution_departures) first, since an
- * institution can leave scope and close later; then HD's merger and closure
- * fields on its last row; and otherwise only that it stopped reporting.
- * Null for an institution in the current year's data.
+ * recorded. A merger or closure recorded on its last row comes first — it is
+ * the more specific account, and an institution wound down by a merger can
+ * also stop granting degrees on the way out (Wesley College, 2021). Then a
+ * departure from scope (institution_departures), and otherwise only that it
+ * stopped reporting. Null for an institution in the current year's data.
  */
 export async function getDeparture(
   institution: typeof institutionYears.$inferSelect,
   year = DEFAULT_YEAR,
 ): Promise<Departure | null> {
   if (institution.year >= year) return null;
-  const [left] = await db
-    .select()
-    .from(institutionDepartures)
-    .where(eq(institutionDepartures.unitid, institution.unitid))
-    .orderBy(desc(institutionDepartures.year))
-    .limit(1);
-  if (left && left.year > institution.year) {
-    return { kind: "left_scope", reason: left.reason as "for_profit" | "not_degree_granting", year: left.year };
-  }
   const endYear = institution.endYear ?? institution.year;
   if (institution.mergedInto) {
     const [current] = await db
@@ -127,6 +119,15 @@ export async function getDeparture(
     };
   }
   if (institution.closedOn) return { kind: "closed", year: endYear, closedOn: institution.closedOn };
+  const [left] = await db
+    .select()
+    .from(institutionDepartures)
+    .where(eq(institutionDepartures.unitid, institution.unitid))
+    .orderBy(desc(institutionDepartures.year))
+    .limit(1);
+  if (left && left.year > institution.year) {
+    return { kind: "left_scope", reason: left.reason as "for_profit" | "not_degree_granting", year: left.year };
+  }
   return { kind: "stopped_reporting", year: institution.year };
 }
 
