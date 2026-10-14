@@ -1,4 +1,4 @@
-// Project-specific classification (not IPEDS's own vocabulary): see memory `project-terminology`.
+// Project-specific classification (not IPEDS's own vocabulary): see .claude/skills/institution-scope.
 //   college          = grants Associate's/Bachelor's only
 //   graduate_school  = grants Master's/Doctoral only
 //   university       = grants both

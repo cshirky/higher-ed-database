@@ -1,14 +1,10 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import { getInstitution, getInstitutionTimeSeries, getAcademicPeerComparison, getTopDegrees, DEFAULT_YEAR } from "@/db/queries";
+import { getInstitution, getInstitutionTimeSeries, getAcademicPeerComparison, getTopDegrees, DEFAULT_YEAR, academicYearLabel } from "@/db/queries";
 import { INSTITUTION_TYPE_LABELS, CONTROL_LABELS, LOCALE_LABELS } from "@/lib/institution-types";
 import { CIP_PREFIX_LABELS } from "@/lib/cip-labels";
 import { TimeSeriesChart } from "@/components/time-series-chart";
 import { PeerTable } from "@/components/peer-table";
-
-function byYear<T extends { year: number }>(rows: T[]): Record<string, unknown>[] {
-  return rows;
-}
 
 // Each institution is rendered on its first visit and then cached until the
 // data changes — scripts/etl/materialize.ts ends by calling /api/revalidate —
@@ -43,7 +39,12 @@ export default async function InstitutionPage({ params }: { params: Promise<{ un
   const yieldRow = [...series.admissions].reverse().find((r) => r.yieldTotal != null);
   // yieldTotal is already stored as a whole-number percentage (47 meaning 47%),
   // same convention as pct_admitted_total — do not multiply by 100 again.
-  const yieldPct = yieldRow?.yieldTotal != null ? `${Math.round(yieldRow.yieldTotal)}%` : "—";
+  // The newest year that reports one; named when it is not the current year,
+  // so an old figure does not pass for this year's.
+  const yieldPct =
+    yieldRow?.yieldTotal != null
+      ? `${Math.round(yieldRow.yieldTotal)}%${yieldRow.year !== DEFAULT_YEAR ? ` (${academicYearLabel(yieldRow.year)})` : ""}`
+      : "—";
 
   return (
     <div className="mx-auto w-full max-w-5xl px-6 py-12">
@@ -53,7 +54,7 @@ export default async function InstitutionPage({ params }: { params: Promise<{ un
 
       <h1 className="mt-3 text-3xl font-semibold tracking-tight">{institution.name}</h1>
       <p className="mt-1 text-[var(--text-secondary)]">
-        {institution.city}, {institution.state} · {typeLabel} · {controlLabel}
+        {[institution.city, institution.state].filter(Boolean).join(", ")} · {typeLabel} · {controlLabel}
       </p>
 
       <div className="mt-6 rounded-lg border border-[var(--border)] bg-[var(--surface)] p-5">
@@ -86,7 +87,7 @@ export default async function InstitutionPage({ params }: { params: Promise<{ un
       <div className="mt-10 grid grid-cols-1 gap-4 sm:grid-cols-2">
         <TimeSeriesChart
           title="Enrollment"
-          data={byYear(series.enrollment)}
+          data={series.enrollment}
           series={[
             { key: "total", label: "Total" },
             { key: "undergradTotal", label: "Undergraduate" },
@@ -96,13 +97,13 @@ export default async function InstitutionPage({ params }: { params: Promise<{ un
         />
         <TimeSeriesChart
           title="Admissions"
-          data={byYear(series.admissions)}
+          data={series.admissions}
           series={[{ key: "pctAdmittedTotal", label: "% admitted" }]}
           format="percent"
         />
         <TimeSeriesChart
           title="SAT scores (50th percentile)"
-          data={byYear(series.admissions)}
+          data={series.admissions}
           series={[
             { key: "satMath50", label: "SAT Math" },
             { key: "satReading50", label: "SAT Reading" },
@@ -110,18 +111,18 @@ export default async function InstitutionPage({ params }: { params: Promise<{ un
         />
         <TimeSeriesChart
           title="ACT Composite (50th percentile)"
-          data={byYear(series.admissions)}
+          data={series.admissions}
           series={[{ key: "actComposite50", label: "ACT Composite" }]}
         />
         <TimeSeriesChart
           title="Tuition & fees (in-state)"
-          data={byYear(series.pricing)}
+          data={series.pricing}
           series={[{ key: "tuitionFeesInState", label: "Tuition & fees" }]}
           format="currency"
         />
         <TimeSeriesChart
           title="Graduation rate"
-          data={byYear(series.graduationRates)}
+          data={series.graduationRates}
           series={[
             { key: "gradRateTotal", label: "Overall" },
             { key: "bachelor6yrRateTotal", label: "Bachelor's, 6-yr" },
@@ -130,7 +131,7 @@ export default async function InstitutionPage({ params }: { params: Promise<{ un
         />
         <TimeSeriesChart
           title="Degrees conferred"
-          data={byYear(series.completions)}
+          data={series.completions}
           series={[
             { key: "associates", label: "Associate's" },
             { key: "bachelors", label: "Bachelor's" },
@@ -140,7 +141,7 @@ export default async function InstitutionPage({ params }: { params: Promise<{ un
         />
         <TimeSeriesChart
           title="Finance: core revenue & expense"
-          data={byYear(series.finance)}
+          data={series.finance}
           series={[
             { key: "coreRevenueTotal", label: "Core revenue" },
             { key: "coreExpenseTotal", label: "Core expense" },
@@ -149,7 +150,7 @@ export default async function InstitutionPage({ params }: { params: Promise<{ un
         />
         <TimeSeriesChart
           title="Financial aid: % receiving any aid"
-          data={byYear(series.financialAid)}
+          data={series.financialAid}
           series={[{ key: "pctAwardedAnyAid", label: "% receiving any aid" }]}
           format="percent"
         />

@@ -32,19 +32,38 @@ const AXIS_WIDTH: Record<FormatKind, number> = {
   compact: 44,
 };
 
+/**
+ * One row for every year from the first to the last, with an empty row where
+ * the data has none. A year with no row at all would otherwise drop off the
+ * axis — the chart would draw 2017 next to 2021 with a solid line between, as
+ * if they were consecutive — instead of showing as the gap it is.
+ */
+function everyYear(rows: Record<string, unknown>[]): Record<string, unknown>[] {
+  const years = rows.map((r) => r.year).filter((y): y is number => typeof y === "number");
+  if (years.length === 0) return rows;
+  const byYear = new Map(rows.map((r) => [r.year, r]));
+  const filled: Record<string, unknown>[] = [];
+  for (let y = Math.min(...years); y <= Math.max(...years); y++) filled.push(byYear.get(y) ?? { year: y });
+  return filled;
+}
+
 export function TimeSeriesChart({
   title,
-  data,
+  data: rows,
   series,
   format,
   subtitle,
+  showLegend = true,
 }: {
   title: string;
   data: Record<string, unknown>[];
   series: Series[];
   format?: FormatKind;
   subtitle?: string;
+  /** Off where the page draws one shared legend for several charts. */
+  showLegend?: boolean;
 }) {
+  const data = everyYear(rows);
   const yFormat = format ? FORMATTERS[format] : undefined;
   const hasAnyData = data.some((row) => series.some((s) => row[s.key] != null));
   if (!hasAnyData) {
@@ -88,17 +107,44 @@ export function TimeSeriesChart({
               }}
               formatter={(value) => (yFormat && typeof value === "number" ? yFormat(value) : value)}
             />
-            {series.length > 1 && <Legend wrapperStyle={{ fontSize: 12 }} />}
+            {showLegend && series.length > 1 && <Legend wrapperStyle={{ fontSize: 12 }} />}
+            {/*
+              Two lines per series. The solid one breaks wherever a year is
+              missing, so no value is drawn that was never reported; the dotted
+              one underneath joins across those gaps, so the eye can still
+              follow the series. Both are straight segments ("linear"), which
+              is what makes the dotted line sit exactly under the solid one
+              everywhere else — a curve would bend differently around a gap.
+
+              Animation is off: the draw-in leaves screenshots, printouts and
+              link previews with dots and no lines.
+            */}
+            {series.map((s, i) => (
+              <Line
+                key={`${s.key}-gaps`}
+                type="linear"
+                dataKey={s.key}
+                stroke={s.color ?? SERIES_COLORS[i % SERIES_COLORS.length]}
+                strokeWidth={1.5}
+                strokeDasharray="2 4"
+                dot={false}
+                activeDot={false}
+                connectNulls
+                legendType="none"
+                tooltipType="none"
+                isAnimationActive={false}
+              />
+            ))}
             {series.map((s, i) => (
               <Line
                 key={s.key}
-                type="monotone"
+                type="linear"
                 dataKey={s.key}
                 name={s.label}
                 stroke={s.color ?? SERIES_COLORS[i % SERIES_COLORS.length]}
                 strokeWidth={2}
                 dot={{ r: 3 }}
-                connectNulls
+                isAnimationActive={false}
               />
             ))}
           </LineChart>

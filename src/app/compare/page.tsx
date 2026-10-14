@@ -18,17 +18,10 @@ function pivot(rows: NationwideTrendRow[], valueKey: keyof NationwideTrendRow) {
   return [...byYear.values()].sort((a, b) => (a.year as number) - (b.year as number));
 }
 
-function seriesFor(label: (t: string) => string) {
-  return TYPES.map((t) => ({
-    key: t,
-    label: label(t),
-    color: INSTITUTION_TYPE_COLORS[t],
-  }));
-}
+const SERIES = TYPES.map((t) => ({ key: t, label: INSTITUTION_TYPE_LABELS[t], color: INSTITUTION_TYPE_COLORS[t] }));
 
 export default async function ComparePage() {
   const trends = await getNationwideTrends();
-  const typeLabel = (t: string) => INSTITUTION_TYPE_LABELS[t as InstitutionType] ?? t;
   const years = trends.map((r) => r.year);
   const yearRange = years.length > 0 ? `${Math.min(...years)}–${Math.max(...years)}` : null;
 
@@ -40,6 +33,7 @@ export default async function ComparePage() {
         {yearRange && `, ${yearRange}`}.
       </p>
 
+      {/* One legend for all six charts, which switch their own off. */}
       <div className="mt-4 flex gap-4 text-sm">
         {TYPES.map((t) => (
           <span key={t} className="flex items-center gap-1.5">
@@ -57,39 +51,45 @@ export default async function ComparePage() {
           title="Number of institutions"
           subtitle="Count of institutions reporting each year"
           data={pivot(trends, "institutionCount")}
-          series={seriesFor(typeLabel)}
+          series={SERIES}
+          showLegend={false}
           format="compact"
         />
         <TimeSeriesChart
           title="Total enrollment"
           subtitle="Sum of fall headcount across all institutions of each type"
           data={pivot(trends, "totalEnrollment")}
-          series={seriesFor(typeLabel)}
+          series={SERIES}
+          showLegend={false}
           format="compact"
         />
         <TimeSeriesChart
           title="Average tuition & fees (in-state)"
           data={pivot(trends, "avgTuition")}
-          series={seriesFor(typeLabel)}
+          series={SERIES}
+          showLegend={false}
           format="currency"
         />
         <TimeSeriesChart
           title="Average admit rate"
           subtitle="Among institutions reporting admissions data"
           data={pivot(trends, "avgAdmitRate")}
-          series={seriesFor(typeLabel)}
+          series={SERIES}
+          showLegend={false}
           format="percent"
         />
         <TimeSeriesChart
           title="Average graduation rate"
           data={pivot(trends, "avgGradRate")}
-          series={seriesFor(typeLabel)}
+          series={SERIES}
+          showLegend={false}
           format="percent"
         />
         <TimeSeriesChart
           title="Average instructional spending per FTE"
           data={pivot(trends, "avgInstructionExpense")}
-          series={seriesFor(typeLabel)}
+          series={SERIES}
+          showLegend={false}
           format="currency"
         />
       </div>

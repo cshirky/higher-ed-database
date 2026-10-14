@@ -10,7 +10,7 @@ import {
 } from "drizzle-orm/pg-core";
 
 // One row per institution per academic year, sourced from IPEDS HD{year}.
-// institutionType is OUR project-specific classification (see project memory):
+// institutionType is OUR project-specific classification (see .claude/skills/institution-scope):
 //   'college'         = grants Associate's/Bachelor's only (ugOffer=1, grOffer=2)
 //   'graduate_school'  = grants Master's/Doctoral only (ugOffer=2, grOffer=1)
 //   'university'       = grants both (ugOffer=1, grOffer=1)
