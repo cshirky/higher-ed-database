@@ -9,7 +9,7 @@ import MDBReader from "mdb-reader";
 import { neon } from "@neondatabase/serverless";
 import { drizzle } from "drizzle-orm/neon-http";
 import * as schema from "../../src/db/schema";
-import { batchedUpsert, cleanInt, cleanNum } from "./upsert";
+import { batchedUpsert, hdCode, int, num } from "./upsert";
 
 const CACHE_DIR = path.resolve("ipeds_data/ipeds-cache");
 
@@ -67,7 +67,7 @@ async function resolveRelease(year: number): Promise<Release> {
   return "Provisional";
 }
 
-async function ensureAccdb(year: number): Promise<string> {
+async function ensureAccdb(year: number): Promise<{ accdb: string; extractDir: string }> {
   mkdirSync(CACHE_DIR, { recursive: true });
   const { url, zipPath, extractDir } = releaseInfo(year, await resolveRelease(year));
 
@@ -91,7 +91,7 @@ async function ensureAccdb(year: number): Promise<string> {
 
   const accdb = await findAccdb(extractDir);
   if (!accdb) throw new Error(`no .accdb found in ${extractDir}`);
-  return accdb;
+  return { accdb, extractDir };
 }
 
 async function findAccdb(dir: string): Promise<string | null> {
@@ -167,7 +167,7 @@ function institutionType(ugOffer: number | null, grOffer: number | null): string
 
 async function loadYear(year: number) {
   console.log(`\n=== Loading ${year} ===`);
-  const accdbPath = await ensureAccdb(year);
+  const { accdb: accdbPath, extractDir } = await ensureAccdb(year);
   console.log(`  reading ${accdbPath}`);
   const reader = new MDBReader(readFileSync(accdbPath));
 
@@ -188,15 +188,15 @@ async function loadYear(year: number) {
   const controlByUnitid = new Map<number, number | null>();
   const inScopeUnitids = new Set<number>(
     hd
-      .filter((r: any) => cleanInt(r.DEGGRANT) === 1 && cleanInt(r.CONTROL) !== 3)
+      .filter((r: any) => hdCode(r.DEGGRANT) === 1 && hdCode(r.CONTROL) !== 3)
       .map((r: any) => r.UNITID),
   );
   const institutionRows = hd
     .filter((r: any) => inScopeUnitids.has(r.UNITID))
     .map((r: any) => {
-      const ugOffer = cleanInt(r.UGOFFER);
-      const grOffer = cleanInt(r.GROFFER);
-      controlByUnitid.set(r.UNITID, cleanInt(r.CONTROL));
+      const ugOffer = hdCode(r.UGOFFER);
+      const grOffer = hdCode(r.GROFFER);
+      controlByUnitid.set(r.UNITID, hdCode(r.CONTROL));
       return {
         unitid: r.UNITID,
         year,
@@ -204,18 +204,18 @@ async function loadYear(year: number) {
         city: r.CITY ?? null,
         state: r.STABBR ?? null,
         zip: r.ZIP ?? null,
-        sector: cleanInt(r.SECTOR),
-        control: cleanInt(r.CONTROL),
-        iclevel: cleanInt(r.ICLEVEL),
-        locale: cleanInt(r.LOCALE),
-        instSize: cleanInt(r.INSTSIZE),
-        hbcu: cleanInt(r.HBCU),
-        tribal: cleanInt(r.TRIBAL),
+        sector: hdCode(r.SECTOR),
+        control: hdCode(r.CONTROL),
+        iclevel: hdCode(r.ICLEVEL),
+        locale: hdCode(r.LOCALE),
+        instSize: hdCode(r.INSTSIZE),
+        hbcu: hdCode(r.HBCU),
+        tribal: hdCode(r.TRIBAL),
         ugOffer,
         grOffer,
-        highestOffering: cleanInt(r.HLOFFER),
+        highestOffering: hdCode(r.HLOFFER),
         institutionType: institutionType(ugOffer, grOffer),
-        carnegieClassification: cleanInt(opt(r, "CARNEGIE")),
+        carnegieClassification: hdCode(opt(r, "CARNEGIE")),
         longitude: r.LONGITUD ?? null,
         latitude: r.LATITUDE ?? null,
       };
@@ -235,26 +235,26 @@ async function loadYear(year: number) {
         return {
           unitid: r.UNITID,
           year,
-          applicantsTotal: cleanInt(r.APPLCN),
-          applicantsMen: cleanInt(r.APPLCNM),
-          applicantsWomen: cleanInt(r.APPLCNW),
-          admitsTotal: cleanInt(r.ADMSSN),
-          admitsMen: cleanInt(r.ADMSSNM),
-          admitsWomen: cleanInt(r.ADMSSNW),
-          enrolledTotal: cleanInt(r.ENRLT),
-          enrolledFullTime: cleanInt(r.ENRLFT),
-          enrolledPartTime: cleanInt(r.ENRLPT),
-          pctAdmittedTotal: derived ? cleanNum(derived.DVADM01) : null,
-          yieldTotal: derived ? cleanNum(derived.DVADM04) : null,
-          satReading25: cleanInt(r.SATVR25),
-          satReading50: cleanInt(opt(r, "SATVR50")),
-          satReading75: cleanInt(r.SATVR75),
-          satMath25: cleanInt(r.SATMT25),
-          satMath50: cleanInt(opt(r, "SATMT50")),
-          satMath75: cleanInt(r.SATMT75),
-          actComposite25: cleanInt(r.ACTCM25),
-          actComposite50: cleanInt(opt(r, "ACTCM50")),
-          actComposite75: cleanInt(r.ACTCM75),
+          applicantsTotal: int(r.APPLCN),
+          applicantsMen: int(r.APPLCNM),
+          applicantsWomen: int(r.APPLCNW),
+          admitsTotal: int(r.ADMSSN),
+          admitsMen: int(r.ADMSSNM),
+          admitsWomen: int(r.ADMSSNW),
+          enrolledTotal: int(r.ENRLT),
+          enrolledFullTime: int(r.ENRLFT),
+          enrolledPartTime: int(r.ENRLPT),
+          pctAdmittedTotal: derived ? num(derived.DVADM01) : null,
+          yieldTotal: derived ? num(derived.DVADM04) : null,
+          satReading25: int(r.SATVR25),
+          satReading50: int(opt(r, "SATVR50")),
+          satReading75: int(r.SATVR75),
+          satMath25: int(r.SATMT25),
+          satMath50: int(opt(r, "SATMT50")),
+          satMath75: int(r.SATMT75),
+          actComposite25: int(r.ACTCM25),
+          actComposite50: int(opt(r, "ACTCM50")),
+          actComposite75: int(r.ACTCM75),
         };
       });
     await batchedUpsert(db, schema.admissions, admissionsRows, ["unitid", "year"]);
@@ -271,23 +271,23 @@ async function loadYear(year: number) {
       .map((r: any) => ({
       unitid: r.UNITID,
       year,
-      total: cleanInt(r.ENRTOT),
-      fte: cleanInt(r.FTE),
-      fullTime: cleanInt(r.ENRFT),
-      partTime: cleanInt(r.ENRPT),
-      undergradTotal: cleanInt(r.EFUG),
-      gradTotal: cleanInt(r.EFGRAD),
-      pctWomen: cleanNum(r.PCTENRW),
-      pctWhite: cleanNum(r.PCTENRWH),
-      pctBlack: cleanNum(r.PCTENRBK),
-      pctHispanic: cleanNum(r.PCTENRHS),
-      pctAsian: cleanNum(r.PCTENRAS),
-      pctAmIndianAkNative: cleanNum(r.PCTENRAN),
-      pctNativeHawaiianPacific: cleanNum(r.PCTENRNH),
-      pctTwoOrMoreRaces: cleanNum(r.PCTENR2M),
-      pctRaceUnknown: cleanNum(r.PCTENRUN),
-      pctNonresident: cleanNum(r.PCTENRNR),
-      pctExclusivelyDistanceEd: cleanNum(opt(r, "PCTDEEXC")),
+      total: int(r.ENRTOT),
+      fte: int(r.FTE),
+      fullTime: int(r.ENRFT),
+      partTime: int(r.ENRPT),
+      undergradTotal: int(r.EFUG),
+      gradTotal: int(r.EFGRAD),
+      pctWomen: num(r.PCTENRW),
+      pctWhite: num(r.PCTENRWH),
+      pctBlack: num(r.PCTENRBK),
+      pctHispanic: num(r.PCTENRHS),
+      pctAsian: num(r.PCTENRAS),
+      pctAmIndianAkNative: num(r.PCTENRAN),
+      pctNativeHawaiianPacific: num(r.PCTENRNH),
+      pctTwoOrMoreRaces: num(r.PCTENR2M),
+      pctRaceUnknown: num(r.PCTENRUN),
+      pctNonresident: num(r.PCTENRNR),
+      pctExclusivelyDistanceEd: num(opt(r, "PCTDEEXC")),
     }));
     await batchedUpsert(db, schema.enrollment, enrollmentRows, ["unitid", "year"]);
     console.log(`  enrollment: ${enrollmentRows.length}`);
@@ -303,17 +303,17 @@ async function loadYear(year: number) {
       .map((r: any) => ({
       unitid: r.UNITID,
       year,
-      certificatesLtOneYear: cleanInt(r.CERT1),
-      certificatesOneToTwoYear: cleanInt(r.CERT2),
-      certificatesTwoToFourYear: cleanInt(r.CERT4),
-      associates: cleanInt(r.ASCDEG),
-      bachelors: cleanInt(r.BASDEG),
-      postbacCertificates: cleanInt(r.PBACERT),
-      masters: cleanInt(r.MASDEG),
-      postmastersCertificates: cleanInt(r.PMACERT),
-      doctorsResearch: cleanInt(r.DOCDEGRS),
-      doctorsProfessional: cleanInt(r.DOCDEGPP),
-      doctorsOther: cleanInt(r.DOCDEGOT),
+      certificatesLtOneYear: int(r.CERT1),
+      certificatesOneToTwoYear: int(r.CERT2),
+      certificatesTwoToFourYear: int(r.CERT4),
+      associates: int(r.ASCDEG),
+      bachelors: int(r.BASDEG),
+      postbacCertificates: int(r.PBACERT),
+      masters: int(r.MASDEG),
+      postmastersCertificates: int(r.PMACERT),
+      doctorsResearch: int(r.DOCDEGRS),
+      doctorsProfessional: int(r.DOCDEGPP),
+      doctorsOther: int(r.DOCDEGOT),
     }));
     await batchedUpsert(db, schema.completions, completionsRows, ["unitid", "year"]);
     console.log(`  completions: ${completionsRows.length}`);
@@ -329,19 +329,19 @@ async function loadYear(year: number) {
       .map((r: any) => ({
       unitid: r.UNITID,
       year,
-      gradRateTotal: cleanNum(r.GRRTTOT),
-      gradRateMen: cleanNum(r.GRRTM),
-      gradRateWomen: cleanNum(r.GRRTW),
-      gradRateWhite: cleanNum(r.GRRTWH),
-      gradRateBlack: cleanNum(r.GRRTBK),
-      gradRateHispanic: cleanNum(r.GRRTHS),
-      gradRateAsian: cleanNum(opt(r, "GRRTAS")),
-      transferOutRateTotal: cleanNum(r.TRRTTOT),
-      bachelor4yrRateTotal: cleanNum(r.GBA4RTT),
-      bachelor5yrRateTotal: cleanNum(r.GBA5RTT),
-      bachelor6yrRateTotal: cleanNum(r.GBA6RTT),
-      pellGradRateTotal: cleanNum(opt(r, "PGGRRTT")),
-      pellBachelor6yrRate: cleanNum(opt(r, "PGBA6RT")),
+      gradRateTotal: num(r.GRRTTOT),
+      gradRateMen: num(r.GRRTM),
+      gradRateWomen: num(r.GRRTW),
+      gradRateWhite: num(r.GRRTWH),
+      gradRateBlack: num(r.GRRTBK),
+      gradRateHispanic: num(r.GRRTHS),
+      gradRateAsian: num(opt(r, "GRRTAS")),
+      transferOutRateTotal: num(r.TRRTTOT),
+      bachelor4yrRateTotal: num(r.GBA4RTT),
+      bachelor5yrRateTotal: num(r.GBA5RTT),
+      bachelor6yrRateTotal: num(r.GBA6RTT),
+      pellGradRateTotal: num(opt(r, "PGGRRTT")),
+      pellBachelor6yrRate: num(opt(r, "PGBA6RT")),
     }));
     await batchedUpsert(db, schema.graduationRates, gradRows, ["unitid", "year"]);
     console.log(`  graduation_rates: ${gradRows.length}`);
@@ -363,16 +363,16 @@ async function loadYear(year: number) {
         unitid: r.UNITID,
         year,
         accountingStandard: standard,
-        coreRevenueTotal: cleanInt(r[`${prefix}CORREV`]),
-        coreExpenseTotal: cleanInt(r[`${prefix}COREXP`]),
-        tuitionRevenuePerFte: cleanNum(r[`${prefix}TUFEFT`]),
-        instructionExpensePerFte: cleanNum(r[`${prefix}INSTFT`]),
-        instructionExpensePct: cleanNum(r[`${prefix}INSTPC`]),
-        researchExpensePct: cleanNum(r[`${prefix}RSRCPC`]),
-        studentServiceExpensePct: cleanNum(r[`${prefix}STSVPC`]),
-        institutionalSupportExpensePct: cleanNum(r[`${prefix}INSUPC`]),
-        endowmentPerFte: cleanNum(r[`${prefix}ENDMFT`]),
-        equityRatio: cleanNum(r[`${prefix}EQUITR`]),
+        coreRevenueTotal: int(r[`${prefix}CORREV`]),
+        coreExpenseTotal: int(r[`${prefix}COREXP`]),
+        tuitionRevenuePerFte: num(r[`${prefix}TUFEFT`]),
+        instructionExpensePerFte: num(r[`${prefix}INSTFT`]),
+        instructionExpensePct: num(r[`${prefix}INSTPC`]),
+        researchExpensePct: num(r[`${prefix}RSRCPC`]),
+        studentServiceExpensePct: num(r[`${prefix}STSVPC`]),
+        institutionalSupportExpensePct: num(r[`${prefix}INSUPC`]),
+        endowmentPerFte: num(r[`${prefix}ENDMFT`]),
+        equityRatio: num(r[`${prefix}EQUITR`]),
       };
     });
     await batchedUpsert(db, schema.finance, financeRows, ["unitid", "year"]);
@@ -389,12 +389,12 @@ async function loadYear(year: number) {
       .map((r: any) => ({
       unitid: r.UNITID,
       year,
-      tuitionFeesInState: cleanInt(r.TUFEYR3),
-      inStateTotalOnCampus: cleanInt(r.CINSON),
-      outStateTotalOnCampus: cleanInt(r.COTSON),
-      inDistrictTotalOnCampus: cleanInt(r.CINDON),
-      inStateTotalOffCampus: cleanInt(r.CINSOFF),
-      outStateTotalOffCampus: cleanInt(r.COTSOFF),
+      tuitionFeesInState: int(r.TUFEYR3),
+      inStateTotalOnCampus: int(r.CINSON),
+      outStateTotalOnCampus: int(r.COTSON),
+      inDistrictTotalOnCampus: int(r.CINDON),
+      inStateTotalOffCampus: int(r.CINSOFF),
+      outStateTotalOffCampus: int(r.COTSOFF),
     }));
     await batchedUpsert(db, schema.pricing, pricingRows, ["unitid", "year"]);
     console.log(`  pricing: ${pricingRows.length}`);
@@ -410,14 +410,14 @@ async function loadYear(year: number) {
       .map((r: any) => ({
       unitid: r.UNITID,
       year,
-      avgSalaryAllRanks: cleanInt(r.SALTOTL),
-      avgSalaryProfessor: cleanInt(r.SALPROF),
-      avgSalaryAssocProfessor: cleanInt(r.SALASSC),
-      avgSalaryAsstProfessor: cleanInt(r.SALASST),
-      fteInstructional: cleanNum(opt(r, "SFTEINST")),
-      fteResearch: cleanNum(opt(r, "SFTERSRC")),
-      ftePublicService: cleanNum(opt(r, "SFTEPBSV")),
-      fteTotalStaff: cleanNum(opt(r, "SFTETOTL")),
+      avgSalaryAllRanks: int(r.SALTOTL),
+      avgSalaryProfessor: int(r.SALPROF),
+      avgSalaryAssocProfessor: int(r.SALASSC),
+      avgSalaryAsstProfessor: int(r.SALASST),
+      fteInstructional: num(opt(r, "SFTEINST")),
+      fteResearch: num(opt(r, "SFTERSRC")),
+      ftePublicService: num(opt(r, "SFTEPBSV")),
+      fteTotalStaff: num(opt(r, "SFTETOTL")),
     }));
     await batchedUpsert(db, schema.faculty, facultyRows, ["unitid", "year"]);
     console.log(`  faculty: ${facultyRows.length}`);
@@ -434,10 +434,10 @@ async function loadYear(year: number) {
       .map((r: any) => ({
         unitid: r.UNITID,
         year,
-        numTotalStudents: cleanInt(r.SCUGRAD),
-        numAwardedAnyAid: cleanInt(r.ANYAIDN),
-        pctAwardedAnyAid: cleanNum(r.ANYAIDP),
-        avgGrantAidAmount: cleanInt(r.AGRNT_A),
+        numTotalStudents: int(r.SCUGRAD),
+        numAwardedAnyAid: int(r.ANYAIDN),
+        pctAwardedAnyAid: num(r.ANYAIDP),
+        avgGrantAidAmount: int(r.AGRNT_A),
       }));
     await batchedUpsert(db, schema.financialAid, aidRows, ["unitid", "year"]);
     console.log(`  financial_aid: ${aidRows.length}`);
@@ -482,6 +482,13 @@ async function loadYear(year: number) {
   } else {
     console.log(`  completions_by_field: skipped (no C${year}_A)`);
   }
+
+  // The extracted Access file (400 MB to 1 GB a year) is only needed while
+  // its year loads, and ensureAccdb re-extracts it from the cached zip in
+  // seconds if it is wanted again. Kept only if the load fails, so a failure
+  // can be investigated without unzipping first.
+  rmSync(extractDir, { recursive: true, force: true });
+  console.log(`  removed ${path.basename(extractDir)}/ (the zip stays cached)`);
 }
 
 async function main() {
