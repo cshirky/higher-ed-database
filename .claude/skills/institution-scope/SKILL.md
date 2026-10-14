@@ -30,6 +30,11 @@ any table and no query has to remember to filter. Do not rely on a per-query
 `control != 3` filter instead — the materialized tables (`nationwide_trends`,
 `academic_similarity`) are computed over whatever is stored.
 
+One deliberate exception to "no row": `institution_departures` records that
+an institution which *was* in scope later became for-profit (or stopped
+granting degrees), and in which year — so its page can say why its data
+stops. It holds only that fact, never figures from the out-of-scope years.
+
 The test is per year. An institution that converted between for-profit and
 nonprofit is kept only for the years it reported as public or nonprofit, so
 its time series can start or stop at the conversion.

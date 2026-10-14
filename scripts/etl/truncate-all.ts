@@ -16,6 +16,7 @@ async function main() {
     "completions_by_field",
     "nationwide_trends",
     "academic_similarity",
+    "institution_departures",
     "institution_years",
   ];
   for (const t of tables) {

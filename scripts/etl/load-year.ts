@@ -156,6 +156,14 @@ function opt(row: any, column: string) {
   return column in row ? row[column] : null;
 }
 
+/** HD's CLOSEDAT ("06/14/2013", or "9/10/12" in older files) as YYYY-MM-DD; null for its "-2" not-applicable code. */
+function closedOn(v: unknown): string | null {
+  const m = typeof v === "string" ? v.trim().match(/^(\d{1,2})\/(\d{1,2})\/(\d{2}|\d{4})$/) : null;
+  if (!m) return null;
+  const year = m[3].length === 2 ? 2000 + Number(m[3]) : Number(m[3]);
+  return `${year}-${m[1].padStart(2, "0")}-${m[2].padStart(2, "0")}`;
+}
+
 function institutionType(ugOffer: number | null, grOffer: number | null): string {
   const ug = ugOffer === 1;
   const gr = grOffer === 1;
@@ -191,11 +199,13 @@ async function loadYear(year: number) {
       .filter((r: any) => hdCode(r.DEGGRANT) === 1 && hdCode(r.CONTROL) !== 3)
       .map((r: any) => r.UNITID),
   );
+  const nameByUnitid = new Map<number, string>(hd.map((r: any) => [r.UNITID, r.INSTNM]));
   const institutionRows = hd
     .filter((r: any) => inScopeUnitids.has(r.UNITID))
     .map((r: any) => {
       const ugOffer = hdCode(r.UGOFFER);
       const grOffer = hdCode(r.GROFFER);
+      const mergedInto = hdCode(r.NEWID) || null;
       controlByUnitid.set(r.UNITID, hdCode(r.CONTROL));
       return {
         unitid: r.UNITID,
@@ -218,10 +228,33 @@ async function loadYear(year: number) {
         carnegieClassification: hdCode(opt(r, "CARNEGIE")),
         longitude: r.LONGITUD ?? null,
         latitude: r.LATITUDE ?? null,
+        closedOn: closedOn(r.CLOSEDAT),
+        mergedInto,
+        mergedIntoName: mergedInto ? (nameByUnitid.get(mergedInto) ?? null) : null,
+        endYear: hdCode(r.DEATHYR) || null,
       };
     });
   await batchedUpsert(db, schema.institutionYears, institutionRows, ["unitid", "year"]);
   console.log(`  institution_years: ${institutionRows.length} (${hd.length - institutionRows.length} out of scope excluded)`);
+
+  // An institution in scope last year that is still in HD this year but out
+  // of scope has left this site's data without closing; record why. Needs
+  // last year loaded first, which a run over consecutive years guarantees.
+  const lastYearInScope = new Set<number>(
+    ((await sqlClient`select unitid from institution_years where year = ${year - 1}`) as { unitid: number }[]).map(
+      (r) => r.unitid,
+    ),
+  );
+  const departureRows = hd
+    .filter((r: any) => lastYearInScope.has(r.UNITID) && !inScopeUnitids.has(r.UNITID))
+    .map((r: any) => ({
+      unitid: r.UNITID,
+      year,
+      reason: hdCode(r.CONTROL) === 3 ? "for_profit" : "not_degree_granting",
+    }));
+  await sqlClient`delete from institution_departures where year = ${year}`;
+  await batchedUpsert(db, schema.institutionDepartures, departureRows, ["unitid", "year"]);
+  if (departureRows.length > 0) console.log(`  institution_departures: ${departureRows.length}`);
 
   // --- admissions (ADM, falling back to IC for pre-2014 years) ---
   const adm = tableOrNull(reader, `ADM${year}`) ?? tableOrNull(reader, `IC${year}`);

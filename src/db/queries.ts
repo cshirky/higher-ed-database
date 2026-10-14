@@ -12,6 +12,7 @@ import {
   financialAid,
   nationwideTrends,
   academicSimilarity,
+  institutionDepartures,
   completionsByField,
 } from "./schema";
 
@@ -82,6 +83,51 @@ export async function getInstitution(unitid: number) {
     .orderBy(desc(institutionYears.year))
     .limit(1);
   return rows[0] ?? null;
+}
+
+export type Departure =
+  | { kind: "left_scope"; reason: "for_profit" | "not_degree_granting"; year: number }
+  | { kind: "merged"; year: number; intoUnitid: number; intoName: string | null; intoIsCurrent: boolean }
+  | { kind: "closed"; year: number; closedOn: string }
+  | { kind: "stopped_reporting"; year: number };
+
+/**
+ * Why an institution has no row in the current year, from what the loader
+ * recorded: a departure from scope (institution_departures) first, since an
+ * institution can leave scope and close later; then HD's merger and closure
+ * fields on its last row; and otherwise only that it stopped reporting.
+ * Null for an institution in the current year's data.
+ */
+export async function getDeparture(
+  institution: typeof institutionYears.$inferSelect,
+  year = DEFAULT_YEAR,
+): Promise<Departure | null> {
+  if (institution.year >= year) return null;
+  const [left] = await db
+    .select()
+    .from(institutionDepartures)
+    .where(eq(institutionDepartures.unitid, institution.unitid))
+    .orderBy(desc(institutionDepartures.year))
+    .limit(1);
+  if (left && left.year > institution.year) {
+    return { kind: "left_scope", reason: left.reason as "for_profit" | "not_degree_granting", year: left.year };
+  }
+  const endYear = institution.endYear ?? institution.year;
+  if (institution.mergedInto) {
+    const [current] = await db
+      .select({ name: institutionYears.name })
+      .from(institutionYears)
+      .where(and(eq(institutionYears.unitid, institution.mergedInto), eq(institutionYears.year, year)));
+    return {
+      kind: "merged",
+      year: endYear,
+      intoUnitid: institution.mergedInto,
+      intoName: current?.name ?? institution.mergedIntoName,
+      intoIsCurrent: current != null,
+    };
+  }
+  if (institution.closedOn) return { kind: "closed", year: endYear, closedOn: institution.closedOn };
+  return { kind: "stopped_reporting", year: institution.year };
 }
 
 export async function getInstitutionTimeSeries(unitid: number) {

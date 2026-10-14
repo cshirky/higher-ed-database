@@ -729,7 +729,7 @@ line: the chart should not draw a value nobody reported.
 
 ### D5. Smaller display rough edges — mostly safe
 
-> **Done 2026-10-14** except the departed-institutions note, which is to be discussed after the re-load.
+> **Done 2026-10-14.** Departed institutions: the user chose to record why each one left. The loader now keeps HD's closure date, merger target and end year on each institution's rows, and records in a new `institution_departures` table any institution that left scope (became for-profit or stopped granting degrees) while still in IPEDS. The institution page shows one line: merged into X (linked when X is current), closed on a date, left scope, or stopped reporting.
 
 Re-checked; the numbers have moved.
 
@@ -852,6 +852,6 @@ As of 2026-10-14. Each item's own status note has the details.
 | D2 `byYear()` | Done | — |
 | D3 Chart animation | Done | — |
 | D4 Gaps in lines | Done (dotted) | — |
-| D5 Display rough edges | Done | Pages for institutions that left the data — to discuss |
+| D5 Display rough edges | Done | — |
 | D6 Stale comments; `cleanNum` | Done | — |
 | D7 This table | Done | — |

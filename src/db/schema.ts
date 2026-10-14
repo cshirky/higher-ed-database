@@ -37,6 +37,12 @@ export const institutionYears = pgTable(
     carnegieClassification: integer("carnegie_classification"),
     longitude: doublePrecision("longitude"),
     latitude: doublePrecision("latitude"),
+    // What HD says about an institution that is ending. IPEDS sets these in
+    // the last year an institution appears, so on any other row they are null.
+    closedOn: text("closed_on"), // CLOSEDAT, as YYYY-MM-DD
+    mergedInto: integer("merged_into"), // NEWID: the unitid it merged into
+    mergedIntoName: text("merged_into_name"), // that institution's name, from the same year's HD
+    endYear: smallint("end_year"), // DEATHYR: the year IPEDS removed it
   },
   (t) => [
     primaryKey({ columns: [t.unitid, t.year] }),
@@ -251,6 +257,22 @@ export const nationwideTrends = pgTable(
     avgInstructionExpense: doublePrecision("avg_instruction_expense"),
   },
   (t) => [primaryKey({ columns: [t.institutionType, t.year] })],
+);
+
+// Institutions that were in scope one year and out of it the next while still
+// reporting to IPEDS: they became for-profit or stopped granting degrees. Only
+// the fact and the year are kept, never any of their data from the
+// out-of-scope years (see .claude/skills/institution-scope). Closures and
+// mergers need no row here; HD records those on the institution's last
+// institution_years row.
+export const institutionDepartures = pgTable(
+  "institution_departures",
+  {
+    unitid: integer("unitid").notNull(),
+    year: smallint("year").notNull(), // the first year it was out of scope
+    reason: text("reason").notNull(), // for_profit | not_degree_granting
+  },
+  (t) => [primaryKey({ columns: [t.unitid, t.year] })],
 );
 
 // Degrees conferred by 6-digit CIP code (subject) and award level, first

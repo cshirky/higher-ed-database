@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import { getInstitution, getInstitutionTimeSeries, getAcademicPeerComparison, getTopDegrees, DEFAULT_YEAR, academicYearLabel } from "@/db/queries";
+import { getInstitution, getInstitutionTimeSeries, getAcademicPeerComparison, getTopDegrees, getDeparture, DEFAULT_YEAR, academicYearLabel, type Departure } from "@/db/queries";
 import { INSTITUTION_TYPE_LABELS, CONTROL_LABELS, LOCALE_LABELS } from "@/lib/institution-types";
 import { CIP_PREFIX_LABELS } from "@/lib/cip-labels";
 import { TimeSeriesChart } from "@/components/time-series-chart";
@@ -16,6 +16,43 @@ export function generateStaticParams() {
   return [];
 }
 
+const formatDate = (iso: string) =>
+  new Date(`${iso}T00:00:00Z`).toLocaleDateString("en-US", { year: "numeric", month: "long", day: "numeric", timeZone: "UTC" });
+
+/** One line saying why an institution is not in the current data. */
+function DepartureNote({ departure }: { departure: Departure }) {
+  switch (departure.kind) {
+    case "left_scope":
+      return (
+        <>
+          {departure.reason === "for_profit"
+            ? "Became a for-profit institution"
+            : "Stopped granting degrees"}{" "}
+          in {academicYearLabel(departure.year)}, which puts it outside this site. The figures below are from
+          its earlier years.
+        </>
+      );
+    case "merged":
+      return (
+        <>
+          Merged into{" "}
+          {departure.intoIsCurrent ? (
+            <Link href={`/institutions/${departure.intoUnitid}`} className="text-[var(--series-1)] hover:underline">
+              {departure.intoName ?? "another institution"}
+            </Link>
+          ) : (
+            (departure.intoName ?? "another institution")
+          )}{" "}
+          in {departure.year}.
+        </>
+      );
+    case "closed":
+      return <>Closed on {formatDate(departure.closedOn)}.</>;
+    case "stopped_reporting":
+      return <>Stopped reporting to IPEDS after {academicYearLabel(departure.year)}.</>;
+  }
+}
+
 export default async function InstitutionPage({ params }: { params: Promise<{ unitid: string }> }) {
   const { unitid: unitidParam } = await params;
   // Digits only, and few enough to fit a Postgres integer: anything else is not
@@ -25,12 +62,13 @@ export default async function InstitutionPage({ params }: { params: Promise<{ un
   const institution = await getInstitution(unitid);
   if (!institution) notFound();
 
-  const [series, peers, topDegrees] = await Promise.all([
+  const [series, peers, topDegrees, departure] = await Promise.all([
     getInstitutionTimeSeries(unitid),
     // The 12 nearest academic peers that are not well below this institution
     // on yield or graduation rate.
     getAcademicPeerComparison(unitid, DEFAULT_YEAR, 12),
     getTopDegrees(unitid, DEFAULT_YEAR),
+    getDeparture(institution, DEFAULT_YEAR),
   ]);
 
   const typeLabel = INSTITUTION_TYPE_LABELS[institution.institutionType as keyof typeof INSTITUTION_TYPE_LABELS] ?? institution.institutionType;
@@ -56,6 +94,11 @@ export default async function InstitutionPage({ params }: { params: Promise<{ un
       <p className="mt-1 text-[var(--text-secondary)]">
         {[institution.city, institution.state].filter(Boolean).join(", ")} · {typeLabel} · {controlLabel}
       </p>
+      {departure && (
+        <p className="mt-3 rounded-md border border-[var(--border)] bg-[var(--surface)] px-3 py-2 text-sm text-[var(--text-secondary)]">
+          <DepartureNote departure={departure} />
+        </p>
+      )}
 
       <div className="mt-6 rounded-lg border border-[var(--border)] bg-[var(--surface)] p-5">
         <div className="grid grid-cols-2 gap-x-8 gap-y-5 sm:grid-cols-4">
