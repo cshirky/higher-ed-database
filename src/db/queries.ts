@@ -1,6 +1,7 @@
 import { and, asc, desc, eq, ilike, inArray, sql } from "drizzle-orm";
 import { db } from "./index";
 import { satIndex } from "@/lib/selectivity";
+import type { TriangleProfile } from "@/lib/triangle";
 import {
   institutionYears,
   admissions,
@@ -231,7 +232,7 @@ const mean = (values: (number | null)[]) => {
  * On-campus totals where published, off-campus otherwise — many commuter
  * institutions report only the latter.
  */
-function costOfAttendance(p: typeof pricing.$inferSelect): number | null {
+export function costOfAttendance(p: typeof pricing.$inferSelect): number | null {
   return (
     mean([p.inStateTotalOnCampus, p.outStateTotalOnCampus]) ??
     mean([p.inStateTotalOffCampus, p.outStateTotalOffCampus])
@@ -406,4 +407,115 @@ export async function getTopDegrees(unitid: number, year = DEFAULT_YEAR, limit =
     // Prefix as tiebreak so equal counts keep one order between requests.
     .orderBy(sql`SUM(${completionsByField.count}) DESC`, sql`LEFT(${completionsByField.cipCode}, 2)`)
     .limit(limit);
+}
+
+/**
+ * Institutions a high-school student could apply to as a first-year student:
+ * four-year (ICLEVEL 1) and offering undergraduate study. The triangle
+ * comparison picks from these.
+ */
+const undergradFourYear = and(eq(institutionYears.iclevel, 1), eq(institutionYears.ugOffer, 1));
+
+/**
+ * Name matches for the triangle picker: names starting with the query first,
+ * then larger undergraduate enrollment, so "michigan" puts the University of
+ * Michigan ahead of every small college with Michigan somewhere in its name.
+ */
+export async function searchUndergradInstitutions(q: string, limit = 8, year = DEFAULT_YEAR) {
+  const escaped = q.trim().replace(/[\\%_]/g, "\\$&");
+  if (!escaped) return [];
+  return db
+    .select({
+      unitid: institutionYears.unitid,
+      name: institutionYears.name,
+      city: institutionYears.city,
+      state: institutionYears.state,
+    })
+    .from(institutionYears)
+    .leftJoin(enrollment, and(eq(enrollment.unitid, institutionYears.unitid), eq(enrollment.year, institutionYears.year)))
+    .where(and(eq(institutionYears.year, year), undergradFourYear, ilike(institutionYears.name, `%${escaped}%`)))
+    .orderBy(
+      sql`${institutionYears.name} ILIKE ${`${escaped}%`} DESC`,
+      sql`${enrollment.undergradTotal} DESC NULLS LAST`,
+      asc(institutionYears.name),
+    )
+    .limit(limit);
+}
+
+/** Everything the triangle comparison sorts, for the given institutions; missing or out-of-scope ids are left out. */
+export async function getTriangleProfiles(unitids: number[], year = DEFAULT_YEAR): Promise<TriangleProfile[]> {
+  const seriesPrefix = sql<string>`LEFT(${completionsByField.cipCode}, 5)`;
+  const [rows, pricingRows, majorRows] = await Promise.all([
+    db
+      .select({
+        institution: institutionYears,
+        admissions,
+        gradRateTotal: graduationRates.gradRateTotal,
+        undergradTotal: enrollment.undergradTotal,
+        pctNonresident: enrollment.pctNonresident,
+        pctExclusivelyDistanceEd: enrollment.pctExclusivelyDistanceEd,
+      })
+      .from(institutionYears)
+      .leftJoin(admissions, and(eq(admissions.unitid, institutionYears.unitid), eq(admissions.year, institutionYears.year)))
+      .leftJoin(
+        graduationRates,
+        and(eq(graduationRates.unitid, institutionYears.unitid), eq(graduationRates.year, institutionYears.year)),
+      )
+      .leftJoin(enrollment, and(eq(enrollment.unitid, institutionYears.unitid), eq(enrollment.year, institutionYears.year)))
+      .where(and(eq(institutionYears.year, year), undergradFourYear, inArray(institutionYears.unitid, unitids))),
+    // One year's fallback, as in getAcademicPeerComparison.
+    db
+      .select()
+      .from(pricing)
+      .where(and(inArray(pricing.unitid, unitids), inArray(pricing.year, [year, year - 1])))
+      .orderBy(asc(pricing.year)),
+    db
+      .select({
+        unitid: completionsByField.unitid,
+        series: seriesPrefix,
+        total: sql<number>`SUM(${completionsByField.count})::int`,
+      })
+      .from(completionsByField)
+      .where(
+        and(
+          inArray(completionsByField.unitid, unitids),
+          eq(completionsByField.year, year),
+          eq(completionsByField.awardLevel, BACHELORS_AWARD_LEVEL),
+        ),
+      )
+      .groupBy(completionsByField.unitid, seriesPrefix)
+      .having(sql`SUM(${completionsByField.count}) > 0`),
+  ]);
+
+  const costByUnitid = new Map<number, number>();
+  for (const p of pricingRows) {
+    const cost = costOfAttendance(p);
+    if (cost != null) costByUnitid.set(p.unitid, cost);
+  }
+  const majorsByUnitid = new Map<number, Map<string, number>>();
+  for (const m of majorRows) {
+    const majors = majorsByUnitid.get(m.unitid) ?? new Map<string, number>();
+    majors.set(m.series, m.total);
+    majorsByUnitid.set(m.unitid, majors);
+  }
+
+  return rows.map(({ institution: i, ...r }) => ({
+    unitid: i.unitid,
+    name: i.name,
+    city: i.city,
+    state: i.state,
+    control: i.control,
+    locale: i.locale,
+    highestOffering: i.highestOffering,
+    hbcu: i.hbcu === 1,
+    tribal: i.tribal === 1,
+    undergradTotal: r.undergradTotal,
+    admitRate: r.admissions?.pctAdmittedTotal ?? null,
+    gradRate: r.gradRateTotal,
+    pctNonresident: r.pctNonresident,
+    pctExclusivelyDistanceEd: r.pctExclusivelyDistanceEd,
+    satIndex: r.admissions ? satIndex(r.admissions) : null,
+    costOfAttendance: costByUnitid.get(i.unitid) ?? null,
+    majors: majorsByUnitid.get(i.unitid) ?? new Map(),
+  }));
 }

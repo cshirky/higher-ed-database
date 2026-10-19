@@ -29,12 +29,14 @@ export default function Home() {
         </button>
       </form>
 
-      <Link
-        href="/institutions"
-        className="mt-6 text-sm text-[var(--series-1)] hover:underline"
-      >
-        Browse all institutions →
-      </Link>
+      <div className="mt-6 flex gap-6 text-sm">
+        <Link href="/institutions" className="text-[var(--series-1)] hover:underline">
+          Browse all institutions →
+        </Link>
+        <Link href="/triangle" className="text-[var(--series-1)] hover:underline">
+          Compare three colleges →
+        </Link>
+      </div>
     </div>
   );
 }

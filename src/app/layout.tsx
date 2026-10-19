@@ -21,13 +21,16 @@ export default function RootLayout({
     <html lang="en" className="h-full antialiased">
       <body className="min-h-full flex flex-col">
         <header className="border-b border-[var(--border)]">
-          <div className="mx-auto flex max-w-5xl items-center justify-between px-6 py-4">
-            <Link href="/" className="text-sm font-semibold tracking-tight">
+          <div className="mx-auto flex max-w-5xl items-center justify-between gap-4 px-4 py-4 sm:px-6">
+            <Link href="/" className="whitespace-nowrap text-sm font-semibold tracking-tight">
               Higher-Ed Database
             </Link>
-            <nav className="flex gap-5">
+            <nav className="flex gap-4 whitespace-nowrap sm:gap-5">
               <Link href="/institutions" className="text-sm text-[var(--text-secondary)] hover:text-[var(--foreground)]">
                 Browse
+              </Link>
+              <Link href="/triangle" className="text-sm text-[var(--text-secondary)] hover:text-[var(--foreground)]">
+                Compare 3
               </Link>
               <Link href="/compare" className="text-sm text-[var(--text-secondary)] hover:text-[var(--foreground)]">
                 Compare
