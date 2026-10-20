@@ -3,8 +3,8 @@ import { LETTER_COLORS, type Letter, type Region } from "@/lib/triangle";
 // Three-circle Venn as a summary and a jump list: each region shows how many
 // things fall in it and links to that region's card below. Circle centres form
 // a triangle (A upper left, B upper right, C below), matching the card layout.
-const R = 85;
-const CENTRES: Record<Letter, [number, number]> = { A: [110, 100], B: [190, 100], C: [150, 170] };
+export const R = 85;
+export const CENTRES: Record<Letter, [number, number]> = { A: [110, 100], B: [190, 100], C: [150, 170] };
 // A point inside each region and outside the circles it excludes.
 const LABEL_AT: Record<Region, [number, number]> = {
   A: [72, 82],
@@ -34,7 +34,7 @@ export function Venn({
           cy={CENTRES[l][1]}
           r={R}
           fill={LETTER_COLORS[l]}
-          fillOpacity={0.12}
+          fillOpacity={0.24}
           stroke={LETTER_COLORS[l]}
           strokeWidth={2}
         />

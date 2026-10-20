@@ -4,18 +4,19 @@
 //
 // Pure functions over already-fetched profiles (see getTriangleProfiles in
 // src/db/queries.ts), so the sorting can be reasoned about apart from the data.
-// Numbers are banded into traits on purpose: "admits 15%" and "admits 20%" are
-// the same thing to a student choosing where to apply, and a shared band is
-// what lets two schools land in the same region. The page shows the actual
-// figures alongside, so a pair that straddles a band edge is visible as such.
+// Most numbers are banded into traits ("Medium (5,000–15,000 undergrads)"), so
+// two schools in one band share a trait. Admit, yield, and graduation rates are
+// instead compared directly: two schools are alike on one when their rates are
+// less than RATE_TOLERANCE points apart. The page shows the actual figures
+// alongside, so a pair that straddles a band edge is visible as such.
 import { CIP_PREFIX_LABELS } from "./cip-labels";
 import { CIP_SERIES_LABELS } from "./cip-series-labels";
-import { CENSUS_REGION, STATE_NAMES } from "./us-states";
+import { CENSUS_REGION } from "./us-states";
 import { LETTERS, type Letter } from "./triangle-letters";
 export { LETTERS, LETTER_COLORS, type Letter } from "./triangle-letters";
 
 /** Every non-empty subset of {A, B, C}, in display order: all three first, then pairs, then each alone. */
-export const REGIONS = ["ABC", "AB", "BC", "AC", "A", "B", "C"] as const;
+export const REGIONS = ["ABC", "AB", "AC", "BC", "A", "B", "C"] as const;
 export type Region = (typeof REGIONS)[number];
 
 export type TriangleProfile = {
@@ -34,6 +35,8 @@ export type TriangleProfile = {
   undergradTotal: number | null;
   /** Whole-number percentages, as stored. */
   admitRate: number | null;
+  /** Share of admitted students who enrolled. */
+  yieldRate: number | null;
   gradRate: number | null;
   pctNonresident: number | null;
   pctExclusivelyDistanceEd: number | null;
@@ -57,6 +60,8 @@ export type Thing = {
   members: Letter[];
   /** Which of the three report nothing to judge it by — so its absence there is not a real difference. */
   unknownFor: Letter[];
+  /** For a compared rate, each member's figure. */
+  rates?: Partial<Record<Letter, number>>;
   /** For a major, its 4-digit CIP series ("11.07"). */
   series?: string;
   /** For a major, bachelor's degrees conferred at each member. */
@@ -128,10 +133,6 @@ const FACETS: Facet[] = [
     },
   },
   {
-    name: "State",
-    value: (p) => (p.state ? { key: `state-${p.state}`, label: `In ${STATE_NAMES[p.state] ?? p.state}` } : null),
-  },
-  {
     name: "Size",
     value: (p) =>
       band(p.undergradTotal, [
@@ -151,16 +152,6 @@ const FACETS: Facet[] = [
     },
   },
   {
-    name: "Selectivity",
-    value: (p) =>
-      band(p.admitRate, [
-        { min: 75, key: "admit-75", label: "Admits 75% or more of applicants" },
-        { min: 50, key: "admit-50", label: "Admits 50–75% of applicants" },
-        { min: 25, key: "admit-25", label: "Admits 25–50% of applicants" },
-        { min: 0, key: "admit-0", label: "Admits fewer than 25% of applicants" },
-      ]),
-  },
-  {
     name: "Test scores",
     value: (p) =>
       band(p.satIndex, [
@@ -168,16 +159,6 @@ const FACETS: Facet[] = [
         { min: 1200, key: "sat-1200", label: "Typical SAT 1200–1400 (or ACT equivalent)" },
         { min: 1000, key: "sat-1000", label: "Typical SAT 1000–1200 (or ACT equivalent)" },
         { min: 0, key: "sat-0", label: "Typical SAT under 1000 (or ACT equivalent)" },
-      ]),
-  },
-  {
-    name: "Graduation rate",
-    value: (p) =>
-      band(p.gradRate, [
-        { min: 80, key: "grad-80", label: "80%+ of students graduate" },
-        { min: 60, key: "grad-60", label: "60–80% of students graduate" },
-        { min: 40, key: "grad-40", label: "40–60% of students graduate" },
-        { min: 0, key: "grad-0", label: "Under 40% of students graduate" },
       ]),
   },
   {
@@ -199,6 +180,51 @@ const FACETS: Facet[] = [
     p.pctExclusivelyDistanceEd == null ? null : p.pctExclusivelyDistanceEd >= 50,
   ),
 ];
+
+/** Rates closer than this many percentage points count as the same. */
+export const RATE_TOLERANCE = 4;
+
+type RateFacet = {
+  name: string;
+  key: string;
+  value: (p: TriangleProfile) => number | null;
+  /** `range` is "15%" for one school, or "15–18%" for a group. */
+  label: (range: string) => string;
+};
+
+const RATE_FACETS: RateFacet[] = [
+  { name: "Selectivity", key: "admit", value: (p) => p.admitRate, label: (r) => `Admits ${r} of applicants` },
+  { name: "Yield", key: "yield", value: (p) => p.yieldRate, label: (r) => `${r} of admitted students enroll` },
+  { name: "Graduation rate", key: "grad", value: (p) => p.gradRate, label: (r) => `${r} of students graduate` },
+];
+
+/**
+ * Splits the schools that report a rate into groups that count as the same:
+ * all of them if every pair is within tolerance, otherwise the closest pair
+ * that is (if any), and everyone else alone. "Within tolerance" is not
+ * transitive — 50%, 53%, 56% — so in that case the middle school goes with
+ * whichever neighbour is nearer (the first pair on a tie) and the far one
+ * stands apart.
+ */
+export function groupRates(values: [Letter, number][]): Letter[][] {
+  const close = (a: number, b: number) => Math.abs(a - b) < RATE_TOLERANCE;
+  const nums = values.map(([, v]) => v);
+  if (values.length >= 2 && Math.max(...nums) - Math.min(...nums) < RATE_TOLERANCE) {
+    return [values.map(([l]) => l)];
+  }
+  let best: [number, number] | null = null;
+  for (let i = 0; i < values.length; i++) {
+    for (let j = i + 1; j < values.length; j++) {
+      const d = Math.abs(values[i][1] - values[j][1]);
+      if (close(values[i][1], values[j][1]) && (!best || d < Math.abs(values[best[0]][1] - values[best[1]][1]))) {
+        best = [i, j];
+      }
+    }
+  }
+  return best
+    ? [[values[best[0]][0], values[best[1]][0]], ...values.filter((_, k) => !best.includes(k)).map(([l]) => [l])]
+    : values.map(([l]) => [l]);
+}
 
 /** A family's general or leftover series — "Biology, General", "Engineering, Other". */
 function isCatchAll(series: string) {
@@ -237,6 +263,26 @@ export function triangleThings(profiles: Record<Letter, TriangleProfile>): Thing
     things.push(...byKey.values());
   }
 
+  for (const facet of RATE_FACETS) {
+    const values = LETTERS.map((l) => [l, facet.value(profiles[l])] as const);
+    const unknownFor = values.filter(([, v]) => v == null).map(([l]) => l);
+    const known = values.filter((e): e is [Letter, number] => e[1] != null).map(([l, v]) => [l, Math.round(v)] as [Letter, number]);
+    for (const members of groupRates(known)) {
+      const rates = Object.fromEntries(known.filter(([l]) => members.includes(l)));
+      const lo = Math.min(...Object.values(rates));
+      const hi = Math.max(...Object.values(rates));
+      things.push({
+        key: `${facet.key}-${members.join("")}`,
+        kind: "trait",
+        label: facet.label(lo === hi ? `${lo}%` : `${lo}–${hi}%`),
+        facet: facet.name,
+        members,
+        unknownFor,
+        rates,
+      });
+    }
+  }
+
   // An institution that reported no bachelor's degrees at all is unknown on
   // every major, not lacking all of them.
   const noMajors = LETTERS.filter((l) => profiles[l].majors.size === 0);
@@ -270,6 +316,16 @@ export function triangleThings(profiles: Record<Letter, TriangleProfile>): Thing
   return things;
 }
 
+// Traits within a region read in this order; flags (HBCU, international, …) follow.
+const TRAIT_ORDER = [
+  "Type", "Setting", "Region", "Size", "Highest degree",
+  "Selectivity", "Test scores", "Yield", "Graduation rate", "Cost",
+];
+const traitRank = (t: Thing) => {
+  const i = TRAIT_ORDER.indexOf(t.facet ?? "");
+  return i === -1 ? TRAIT_ORDER.length : i;
+};
+
 /** Things grouped by region; majors within a region ordered by degrees conferred across its members, most first. */
 export function thingsByRegion(things: Thing[]): Record<Region, Thing[]> {
   const out = Object.fromEntries(REGIONS.map((r) => [r, [] as Thing[]])) as Record<Region, Thing[]>;
@@ -279,7 +335,7 @@ export function thingsByRegion(things: Thing[]): Record<Region, Thing[]> {
     out[r].sort((a, b) => {
       if (a.kind !== b.kind) return a.kind === "trait" ? -1 : 1;
       if (a.kind === "major") return total(b) - total(a) || a.label.localeCompare(b.label);
-      return 0; // traits keep facet order
+      return traitRank(a) - traitRank(b); // stable, so flags keep their order
     });
   }
   return out;

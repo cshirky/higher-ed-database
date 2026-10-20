@@ -3,6 +3,7 @@ import { getTriangleProfiles, DEFAULT_YEAR, academicYearLabel } from "@/db/queri
 import { LOCALE_LABELS } from "@/lib/institution-types";
 import {
   LETTERS,
+  RATE_TOLERANCE,
   REGIONS,
   thingsByRegion,
   triangleThings,
@@ -12,24 +13,17 @@ import {
   type TriangleProfile,
 } from "@/lib/triangle";
 import { LetterBadge } from "./letter-badge";
+import { RegionIcon, RegionIconDefs } from "./region-icon";
 import { TrianglePicker, type PickedInstitution } from "./picker";
 import { Venn } from "./venn";
 
 // Majors listed before a region's list folds behind "Show more".
 const MAJORS_SHOWN = 12;
 
-// Where each region's card sits on wide screens: the three schools at the
-// corners of a triangle, each pair on the edge between its two, and what all
-// three share in the middle. Narrow screens stack them in REGIONS order.
-const PLACEMENT: Record<Region, string> = {
-  A: "lg:col-start-1 lg:row-start-1",
-  AB: "lg:col-start-2 lg:row-start-1",
-  B: "lg:col-start-3 lg:row-start-1",
-  AC: "lg:col-start-1 lg:row-start-2",
-  ABC: "lg:col-start-2 lg:row-start-2",
-  BC: "lg:col-start-3 lg:row-start-2",
-  C: "lg:col-start-2 lg:row-start-3",
-};
+// On wide screens: what all three share across the top, then the three pairs
+// in a row, then each school on its own. Narrow screens stack them in the
+// same order.
+const PLACEMENT: Partial<Record<Region, string>> = { ABC: "lg:col-span-3" };
 
 function parseId(v: string | string[] | undefined) {
   return typeof v === "string" && /^\d{1,9}$/.test(v) ? Number(v) : null;
@@ -108,6 +102,7 @@ function TriangleResult({ profiles }: { profiles: Record<Letter, TriangleProfile
 
   return (
     <>
+      <RegionIconDefs regions={REGIONS} />
       <section className="mt-10 flex flex-col items-center gap-6 sm:flex-row sm:items-center">
         <Venn counts={counts} describe={describe} />
         <ul className="space-y-3 text-sm">
@@ -139,7 +134,7 @@ function TriangleResult({ profiles }: { profiles: Record<Letter, TriangleProfile
             subtitle={subtitle(r)}
             things={byRegion[r]}
             name={name}
-            className={PLACEMENT[r]}
+            className={PLACEMENT[r] ?? ""}
           />
         ))}
       </section>
@@ -148,8 +143,9 @@ function TriangleResult({ profiles }: { profiles: Record<Letter, TriangleProfile
 
       <p className="mt-6 max-w-3xl text-xs text-[var(--text-muted)]">
         From IPEDS, academic year {academicYearLabel(DEFAULT_YEAR)} (sticker prices from the year before where
-        this year&apos;s are not out yet). Numbers are grouped into ranges, so two colleges just either side of a
-        line — admitting 24% and 26% — count as different; the table shows the actual figures. A major counts as
+        this year&apos;s are not out yet). Admit rate, yield, and graduation rate count as the same when they are
+        less than {RATE_TOLERANCE} points apart. Other numbers are grouped into ranges, so two colleges just either
+        side of a line count as different; the table shows the actual figures. A major counts as
         offered when at least one student finished a bachelor&apos;s degree in it that year as a first major. ≈ marks
         a major the lettered college may teach under another name — Psychology, General at one school and Research
         and Experimental Psychology at another. Hover over it to see which.
@@ -185,12 +181,8 @@ function RegionCard({
         isAll ? "border-[var(--text-muted)]" : "border-[var(--border)]"
       } ${className}`}
     >
-      <header className="flex items-start gap-2">
-        <span className="mt-0.5 flex -space-x-1">
-          {members.map((l) => (
-            <LetterBadge key={l} letter={l} size="sm" />
-          ))}
-        </span>
+      <header className="flex items-center gap-3">
+        <RegionIcon region={region} />
         <span className="min-w-0">
           <h2 className="text-sm font-semibold leading-snug">{title}</h2>
           <p className="text-xs text-[var(--text-muted)]">{subtitle}</p>
@@ -202,7 +194,7 @@ function RegionCard({
       {traits.length > 0 && (
         <ul className="mt-3 space-y-1 text-sm">
           {traits.map((t) => (
-            <li key={t.key}>
+            <li key={t.key} title={rateTooltip(t, name)}>
               {t.label}
               <UnknownNote thing={t} name={name} />
             </li>
@@ -229,6 +221,12 @@ function RegionCard({
       )}
     </article>
   );
+}
+
+/** For a rate shared by two or three schools, each one's figure. */
+function rateTooltip(t: Thing, name: (l: Letter) => string) {
+  const rates = Object.entries(t.rates ?? {}) as [Letter, number][];
+  return rates.length > 1 ? rates.map(([l, v]) => `${name(l)}: ${v}%`).join("\n") : undefined;
 }
 
 function MajorList({ majors, single, name }: { majors: Thing[]; single: boolean; name: (l: Letter) => string }) {
@@ -291,6 +289,7 @@ const ROWS: { label: string; value: (p: TriangleProfile) => string }[] = [
   { label: "Undergraduates", value: (p) => num(p.undergradTotal) },
   { label: "Highest degree", value: (p) => (p.highestOffering ? (HIGHEST_DEGREE[p.highestOffering] ?? "—") : "—") },
   { label: "Admit rate", value: (p) => pct(p.admitRate) },
+  { label: "Yield (admitted students who enroll)", value: (p) => pct(p.yieldRate) },
   { label: "Typical SAT (or ACT equivalent)", value: (p) => num(p.satIndex) },
   { label: "Graduation rate", value: (p) => pct(p.gradRate) },
   { label: "Sticker price per year", value: (p) => usd(p.costOfAttendance) },

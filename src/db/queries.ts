@@ -511,6 +511,7 @@ export async function getTriangleProfiles(unitids: number[], year = DEFAULT_YEAR
     tribal: i.tribal === 1,
     undergradTotal: r.undergradTotal,
     admitRate: r.admissions?.pctAdmittedTotal ?? null,
+    yieldRate: r.admissions?.yieldTotal ?? null,
     gradRate: r.gradRateTotal,
     pctNonresident: r.pctNonresident,
     pctExclusivelyDistanceEd: r.pctExclusivelyDistanceEd,
