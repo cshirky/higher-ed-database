@@ -200,6 +200,8 @@ async function loadYear(year: number) {
       .map((r: any) => r.UNITID),
   );
   const nameByUnitid = new Map<number, string>(hd.map((r: any) => [r.UNITID, r.INSTNM]));
+  const ic = tableOrNull(reader, `IC${year}`);
+  const relaffilByUnitid = new Map<number, number | null>((ic ?? []).map((r: any) => [r.UNITID, hdCode(opt(r, "RELAFFIL"))]));
   const institutionRows = hd
     .filter((r: any) => inScopeUnitids.has(r.UNITID))
     .map((r: any) => {
@@ -226,6 +228,8 @@ async function loadYear(year: number) {
         highestOffering: hdCode(r.HLOFFER),
         institutionType: institutionType(ugOffer, grOffer),
         carnegieClassification: hdCode(opt(r, "CARNEGIE")),
+        carnegieBasic: hdCode(opt(r, "C21BASIC") ?? opt(r, "C18BASIC") ?? opt(r, "C15BASIC")),
+        religiousAffiliation: relaffilByUnitid.get(r.UNITID) ?? null,
         longitude: r.LONGITUD ?? null,
         latitude: r.LATITUDE ?? null,
         closedOn: closedOn(r.CLOSEDAT),

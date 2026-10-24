@@ -35,6 +35,10 @@ export const institutionYears = pgTable(
     highestOffering: smallint("highest_offering"), // HLOFFER code 1-9
     institutionType: text("institution_type").notNull(), // college | graduate_school | university | other
     carnegieClassification: integer("carnegie_classification"),
+    // Carnegie basic classification, 2015-or-later edition (C21BASIC, else
+    // C18BASIC, else C15BASIC — the three share one code list); null before 2015.
+    carnegieBasic: smallint("carnegie_basic"),
+    religiousAffiliation: smallint("religious_affiliation"), // IC RELAFFIL; null when none
     longitude: doublePrecision("longitude"),
     latitude: doublePrecision("latitude"),
     // What HD says about an institution that is ending. IPEDS sets these in

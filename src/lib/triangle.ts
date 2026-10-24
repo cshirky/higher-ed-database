@@ -13,6 +13,7 @@ import { CIP_PREFIX_LABELS } from "./cip-labels";
 import { CIP_SERIES_LABELS } from "./cip-series-labels";
 import { CENSUS_REGION } from "./us-states";
 import { LETTERS, type Letter } from "./triangle-letters";
+import { RATE_TOLERANCE } from "./rate-tolerance";
 export { LETTERS, LETTER_COLORS, type Letter } from "./triangle-letters";
 
 /** Every non-empty subset of {A, B, C}, in display order: all three first, then pairs, then each alone. */
@@ -181,8 +182,7 @@ const FACETS: Facet[] = [
   ),
 ];
 
-/** Rates closer than this many percentage points count as the same. */
-export const RATE_TOLERANCE = 4;
+export { RATE_TOLERANCE };
 
 type RateFacet = {
   name: string;

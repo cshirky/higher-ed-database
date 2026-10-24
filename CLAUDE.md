@@ -2,7 +2,31 @@
 
 ## Status
 
-_Last updated 2026-10-19._
+_Last updated 2026-10-23._
+
+**In progress (uncommitted):** `/network`, five experimental views of one
+college's network, for a student to pick between: `/network/{culture,quest,
+transit,stars,city}?id=<unitid>` (Petri dish, RPG skill tree, transit map,
+star chart, isometric city). Each shows up to 20 academic peers that are the
+same or better on yield, graduation rate, and cost, sized by undergrads
+relative to the target.
+- Selection: `getCollegeNetwork` in `src/db/queries.ts`; the same/better rule
+  (`judge`) and shared types live in `src/lib/college-network.ts`.
+- A "collar" (`withinCollar`) runs before same-or-better. A peer must have
+  ≥1% of its bachelor's degrees in each of the target's 3 biggest subject areas.
+  Special-focus schools (Carnegie 24–32) match only their own focus.
+  Faith-centered colleges match only each other. "Faith-centered" means any
+  religious affiliation outside `HISTORIC_AFFILIATIONS`, a judgment call kept
+  in a list. It keeps Curtis and Hillsdale out of Oberlin's network. It reads
+  two new `institution_years` columns, `carnegie_basic` and
+  `religious_affiliation`. These are loaded for 2024 only so far; other
+  years need a `load-year.ts` rerun.
+- Known gap: `academic_similarity` stores 60 peers chosen before the collar.
+  Faith-centered schools can therefore come up nearly empty (BYU has no LDS
+  peer in its 60). The fix is to apply the collar inside `materialize.ts`.
+- Views: `src/app/network/_views/`. The page shell is `src/app/network/[view]/page.tsx`.
+- The request asked for "4 axes" but named three. Only three are built; adding
+  a fourth means one entry in `AXES` plus a value in `getCollegeNetwork`.
 
 **Just shipped:** `/triangle` (c222eb2), live at
 https://higher-ed-database.vercel.app/triangle. A student picks three four-year

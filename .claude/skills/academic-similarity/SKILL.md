@@ -101,3 +101,7 @@ into one parameterized table.
 
 The peer table on `/institutions/[unitid]`
 (`src/components/peer-table.tsx`), fed by `getAcademicPeerComparison()`.
+
+The `/network/*` views, fed by `getCollegeNetwork()`, which applies a stricter
+same-or-better rule on top of it and also reads the peer-to-peer distances
+among the chosen schools (the stars, threads, and branches between peers).

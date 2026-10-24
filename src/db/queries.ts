@@ -2,6 +2,16 @@ import { and, asc, desc, eq, ilike, inArray, sql } from "drizzle-orm";
 import { db } from "./index";
 import { satIndex } from "@/lib/selectivity";
 import type { TriangleProfile } from "@/lib/triangle";
+import { CIP_PREFIX_LABELS } from "@/lib/cip-labels";
+import {
+  NETWORK_SIZE,
+  collarMajors,
+  judge,
+  withinCollar,
+  type CollarFacts,
+  type CollegeNetwork,
+  type NetworkSchool,
+} from "@/lib/college-network";
 import {
   institutionYears,
   admissions,
@@ -414,6 +424,97 @@ export async function getTopDegrees(unitid: number, year = DEFAULT_YEAR, limit =
  * four-year (ICLEVEL 1) and offering undergraduate study. The triangle
  * comparison picks from these.
  */
+/**
+ * The college network for one four-year school: its nearest academic peers
+ * that a student would weigh alongside it (`withinCollar`) and that are the
+ * same or better on yield, graduation rate, and cost (`judge`; both in
+ * src/lib/college-network.ts), up to NETWORK_SIZE, plus the
+ * academic distance between every pair of them that the similarity table
+ * stores. Null when the school is not a four-year college in `year`.
+ *
+ * All of the stored peers are fetched, not just NETWORK_SIZE, because the
+ * same-or-better rule passes over many of them.
+ */
+export async function getCollegeNetwork(unitid: number, year = DEFAULT_YEAR): Promise<CollegeNetwork | null> {
+  const [inScope] = await db
+    .select({ unitid: institutionYears.unitid })
+    .from(institutionYears)
+    .where(and(eq(institutionYears.unitid, unitid), eq(institutionYears.year, year), undergradFourYear));
+  if (!inScope) return null;
+
+  // Every subject area, not just the few shown, since the collar needs a
+  // peer's share in each of the target's largest ones.
+  const all = await getAcademicPeerComparison(unitid, year, Number.MAX_SAFE_INTEGER, Number.MAX_SAFE_INTEGER);
+  const target = all.find((p) => p.isTarget);
+  if (!target) return null;
+
+  const collarRows = await db
+    .select({
+      unitid: institutionYears.unitid,
+      carnegieBasic: institutionYears.carnegieBasic,
+      religiousAffiliation: institutionYears.religiousAffiliation,
+    })
+    .from(institutionYears)
+    .where(and(eq(institutionYears.year, year), inArray(institutionYears.unitid, all.map((p) => p.unitid))));
+  const collarById = new Map(collarRows.map((r) => [r.unitid, r]));
+  const facts = (p: AcademicPeer): CollarFacts => {
+    const total = p.topMajors.reduce((sum, m) => sum + m.total, 0);
+    return {
+      carnegieBasic: collarById.get(p.unitid)?.carnegieBasic ?? null,
+      religiousAffiliation: collarById.get(p.unitid)?.religiousAffiliation ?? null,
+      majorShares: new Map(p.topMajors.map((m) => [m.prefix, total > 0 ? m.total / total : 0])),
+    };
+  };
+  const targetFacts = facts(target);
+  const majors = collarMajors(targetFacts);
+
+  const values = (p: AcademicPeer) => ({ yield: p.yieldTotal, gradRate: p.gradRateTotal, cost: p.costOfAttendance });
+  const toSchool = (p: AcademicPeer, verdicts: NetworkSchool["verdicts"]): NetworkSchool => ({
+    unitid: p.unitid,
+    name: p.name,
+    state: p.state,
+    control: p.control,
+    undergrad: p.undergradTotal,
+    sizeRatio: p.undergradTotal && target.undergradTotal ? p.undergradTotal / target.undergradTotal : null,
+    values: values(p),
+    verdicts,
+    betterCount: Object.values(verdicts).filter((v) => v === "better").length,
+    rank: p.rank ?? 0,
+    topMajors: p.topMajors.slice(0, 3).map((m) => CIP_PREFIX_LABELS[m.prefix] ?? `CIP ${m.prefix}`),
+  });
+
+  const targetValues = values(target);
+  const peers: NetworkSchool[] = [];
+  for (const p of all) {
+    if (p.isTarget || !withinCollar(targetFacts, facts(p), majors)) continue;
+    const verdicts = judge(targetValues, values(p));
+    if (verdicts) peers.push(toSchool(p, verdicts));
+    if (peers.length === NETWORK_SIZE) break;
+  }
+  // Against itself every axis is "same", or "unknown" where it reports nothing.
+  const self = toSchool(target, judge(targetValues, targetValues)!);
+
+  const ids = [unitid, ...peers.map((p) => p.unitid)];
+  const pairs = await db
+    .select({ a: academicSimilarity.unitid, b: academicSimilarity.peerUnitid, distance: academicSimilarity.distance })
+    .from(academicSimilarity)
+    .where(
+      and(
+        eq(academicSimilarity.year, year),
+        inArray(academicSimilarity.unitid, ids),
+        inArray(academicSimilarity.peerUnitid, ids),
+      ),
+    );
+  // Each pair can be stored twice, once from each side; the distance is symmetric.
+  const links = new Map<string, CollegeNetwork["links"][number]>();
+  for (const { a, b, distance } of pairs) {
+    const key = a < b ? `${a}-${b}` : `${b}-${a}`;
+    if (!links.has(key)) links.set(key, { a: Math.min(a, b), b: Math.max(a, b), distance });
+  }
+
+  return { target: self, peers, links: [...links.values()] };
+}
+
 const undergradFourYear = and(eq(institutionYears.iclevel, 1), eq(institutionYears.ugOffer, 1));
 
 /**
