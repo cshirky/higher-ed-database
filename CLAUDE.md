@@ -2,33 +2,60 @@
 
 ## Status
 
-_Last updated 2026-10-23._
+_Last updated 2026-10-24._
 
-**In progress (uncommitted):** `/network`, five experimental views of one
-college's network, for a student to pick between: `/network/{culture,quest,
-transit,stars,city}?id=<unitid>` (Petri dish, RPG skill tree, transit map,
-star chart, isometric city). Each shows up to 20 academic peers that are the
-same or better on yield, graduation rate, and cost, sized by undergrads
-relative to the target.
-- Selection: `getCollegeNetwork` in `src/db/queries.ts`; the same/better rule
-  (`judge`) and shared types live in `src/lib/college-network.ts`.
-- A "collar" (`withinCollar`) runs before same-or-better. A peer must have
-  ≥1% of its bachelor's degrees in each of the target's 3 biggest subject areas.
-  Special-focus schools (Carnegie 24–32) match only their own focus.
-  Faith-centered colleges match only each other. "Faith-centered" means any
-  religious affiliation outside `HISTORIC_AFFILIATIONS`, a judgment call kept
-  in a list. It keeps Curtis and Hillsdale out of Oberlin's network. It reads
-  two new `institution_years` columns, `carnegie_basic` and
-  `religious_affiliation`. These are loaded for 2024 only so far; other
-  years need a `load-year.ts` rerun.
-- Known gap: `academic_similarity` stores 60 peers chosen before the collar.
-  Faith-centered schools can therefore come up nearly empty (BYU has no LDS
-  peer in its 60). The fix is to apply the collar inside `materialize.ts`.
-- Views: `src/app/network/_views/`. The page shell is `src/app/network/[view]/page.tsx`.
-- The request asked for "4 axes" but named three. Only three are built; adding
+**Just shipped:** `/network` (e7652ac), live at
+https://higher-ed-database.vercel.app/network. It offers five experimental
+views of one college's network for a student to pick between:
+`/network/{culture,quest,transit,stars,city}?id=<unitid>`. Those are the Petri
+dish, RPG skill tree, transit map, star chart, and isometric city. Each shows
+up to 20 academic peers that are the same or better on yield, graduation rate,
+and cost, sized by undergrads relative to the target.
+- Selection: `getCollegeNetwork` in `src/db/queries.ts`. The same-or-better
+  rule (`judge`) and shared types live in `src/lib/college-network.ts`.
+- Views: `src/app/network/_views/`. The page shell is
+  `src/app/network/[view]/page.tsx`.
+- The request asked for "4 axes" but named three. Only three are built. Adding
   a fourth means one entry in `AXES` plus a value in `getCollegeNetwork`.
+- A first-cut "collar" (`withinCollar`) runs before same-or-better, so the
+  network holds only schools a student would weigh together. A peer must have
+  at least 1% of its bachelor's degrees in each of the target's 3 biggest
+  subject areas. Special-focus schools (Carnegie 24–32) match only their own
+  focus. Faith-centered colleges match only each other; that means any
+  religious affiliation outside `HISTORIC_AFFILIATIONS`. It reads two new
+  `institution_years` columns, `carnegie_basic` and `religious_affiliation`.
+  These are loaded for 2024 only; other years need a `load-year.ts` rerun.
 
-**Just shipped:** `/triangle` (c222eb2), live at
+**Deferred: kinds of school the collar must handle properly.** The current
+rules are placeholders. Handle each category deliberately later:
+- **Faith-based colleges.** The secular-vs-faith-centered split in
+  `HISTORIC_AFFILIATIONS` is a judgment call. Catholic colleges range from
+  Georgetown to Christendom, and IPEDS can't tell them apart.
+  - Known gap: `academic_similarity` stores 60 peers chosen before the
+    collar, so faith-centered schools come up nearly empty. BYU has no LDS
+    peer in its 60, and Wheaton (IL)'s only peer is Hillsdale. The fix is to
+    apply the collar inside `materialize.ts`.
+- **Political valence.** IPEDS has no field for it, so Oberlin and Hillsdale
+  only part today because Hillsdale's affiliation is "Undenominational". This
+  needs an outside source or a hand-kept list.
+- **Conservatories and other special-focus schools.** Arts, music, design,
+  engineering, business, health, and seminaries. They currently match only
+  their own Carnegie class. Undecided:
+  - Whether a conservatory should ever match a college with a conservatory,
+    like Oberlin.
+  - How to treat Curtis, which is tuition-free and so has no peer that is
+    "same or better" on cost.
+- **Possibly related, not yet raised:**
+  - Women's colleges. Mount Holyoke, Scripps, and Bryn Mawr are in Oberlin's
+    network.
+  - HBCUs and tribal colleges.
+  - Military academies.
+  - Schools that take no federal aid: Hillsdale and Grove City by choice,
+    Curtis because it is free. IPEDS records this as HD `OPEFLAG` 5–6. It was
+    tried as a collar rule and dropped because it cut Curtis off from other
+    conservatories.
+
+**Shipped earlier:** `/triangle` (c222eb2), live at
 https://higher-ed-database.vercel.app/triangle. A student picks three four-year
 colleges, and the page shows what is unique to each, shared by each pair, and
 common to all three. It covers traits (type, setting, region, size, highest
