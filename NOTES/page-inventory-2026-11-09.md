@@ -33,17 +33,26 @@ Duplication inside this repo: two deck pages, two card components
 (`institutions.csv`, `all_schools.csv`, `good_schools.csv`). The project review
 notes the same duplicates.
 
-## higher-ed-database (Next.js + Neon, 4 pages)
+## higher-ed-database (Next.js + Neon, 7 routes)
+
+*Updated against `main` at `b32b90d`. The first draft of this inventory listed 4
+pages; 34 commits had landed that I hadn't pulled.*
 
 | Page | What it does | Proposed |
 |---|---|---|
-| `/` | Search home | Merge: becomes the merged app's home |
+| `/` | Search home | Merge: search moves into Explore; the Discover flow becomes the entrance |
 | `/institutions` | Searchable institution list | Keep |
-| `/institutions/[unitid]` | Detail page with time series: enrollment, admissions, SAT/ACT, and more | Keep: the profile page; absorb `schools` |
+| `/institutions/[unitid]` | Detail page with time series (enrollment, admissions, SAT/ACT, cost, finance, graduation), a peer table from `academic_similarity`, and a note on why an institution left the data | Keep: the profile page; absorb `schools` |
 | `/compare` | "Nationwide comparison": counts and enrollment by institution type over time | Keep: Trends section |
+| `/triangle` | Pick three four-year colleges; shows what is unique to each, shared by each pair, and common to all three (traits and bachelor's majors) | Keep: Compare section. Overlaps `comparator_vercel` and `college-dashboard/compare`; see below |
+| `/network` and `/network/{culture,quest,transit,stars,city}` | Five experimental views (Petri dish, RPG skill tree, transit map, star chart, isometric city) of one college's same-or-better peers, up to 20, on yield, graduation rate and cost | Keep one or two views; the other three are Defer or Drop. The status note says they exist so a student can pick |
+| `/api/institutions/search`, `/api/revalidate` | Autocomplete, and cache refresh after a data load | Keep (plumbing) |
 
-The database also has `peer_network` and `academic_similarity` tables. I did
-not check whether any page uses them yet.
+Changes in the database since the first draft: `peer_network` was dropped
+(`/network` now computes peers live with `getCollegeNetwork`). The data covers
+IPEDS 2010 through 2024. There is a new `institution_departures` table.
+`institution_years` gained `carnegie_basic`, `religious_affiliation` and
+merger/closure columns (the first two are loaded for 2024 only so far).
 
 ## comparator_vercel (1 page + API)
 
@@ -75,15 +84,33 @@ not IPEDS, so it needs its own source table before it can live in the database.
 | Section | Pages |
 |---|---|
 | **Discover** | intro, vibe, academics, twins, deck |
-| **Explore** | institutions list, institution profile (with school card), landscape scatterplot, 3D |
-| **Compare** | category compare, side-by-side comparator, peer network (year selector) |
+| **Explore** | institutions list, institution profile (with school card and peer table), landscape scatterplot, 3D |
+| **Compare** | category compare, Compare 3 (`/triangle`), side-by-side comparator, peer network (`/network`, plus the `school_comparisons` network with a year selector) |
 | **Trends** | nationwide comparison, faculty employment |
 
-That is roughly 16 pages from today's ~24, with the three duplicate pairs
-(decks, cards, network years) resolved.
+That is roughly 17 pages from today's ~27 (4 new routes in
+`higher-ed-database` since the first draft), with the duplicate pairs (decks,
+cards, network years) resolved.
+
+New overlaps the update found, all to resolve while merging:
+- **Compare:** `/triangle`, `comparator_vercel` and `college-dashboard/compare`
+  all compare schools, in three different ways (three named schools, two named
+  schools, up to three *categories* of school). `/triangle` is the only one on
+  the database; it is the natural base, with the category compare kept as its
+  own mode.
+- **Peers / "twins":** `college-dashboard/twins` (three questions → matches),
+  `/network` (same-or-better peers of one school), the peer table on each
+  profile, and the `school_comparisons` network graph all answer "which schools
+  are like this one". They use different definitions of "like".
+- **Isometric:** the `city` view of `/network` is an isometric picture, and the
+  old `Scatterplot` branch of `college-dashboard` had an `isometric.md` page.
+  Check before porting anything isometric twice.
 
 ## Decisions (2026-11-09)
 1. Discover flow (intro, vibe, academics, twins, deck) is the main entrance; search becomes part of Explore.
 2. Keep the 3D view.
 3. Merge the faculty-employment charts into the app (Trends).
 4. No page is precious; anything can be reverted from git.
+
+Open after the update: which `/network` view (or views) to keep, and whether the
+"peer" definition is shared between Discover's `twins` and `/network`.

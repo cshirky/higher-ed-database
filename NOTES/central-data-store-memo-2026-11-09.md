@@ -7,7 +7,7 @@ and should be checked against current vendor pricing before committing.
 
 | Project | How it gets its data today |
 |---|---|
-| `higher-ed-database` | **Already cloud-backed.** Next.js + Drizzle + Neon Postgres (13 tables, IPEDS only, ~4,000 in-scope institutions), loaded by `scripts/etl/`. |
+| `higher-ed-database` | **Already cloud-backed and live** at higher-ed-database.vercel.app. Next.js + Drizzle + Neon Postgres, IPEDS only, collection years 2010–2024, 13 tables, loaded by `scripts/etl/` (see the update below). |
 | `college-dashboard` | Observable Framework static site. A stdlib-Python pipeline joins Carnegie 2025 with IPEDS 2023 and writes CSVs that are committed to git (~25 MB of raw files, plus xlsx in the repo root). |
 | `comparator_vercel` | Static page + a small Vercel Python API over a 377 KB `schools.json`. |
 | `school_comparisons` | Python scripts that write JSON/CSV (`comparison_groups_2024.json`, 308 KB) for static HTML pages. |
@@ -135,6 +135,7 @@ Neon/Vercel setup, so those two are not hypothetical.
    you also want earlier Carnegie years in the store?
 
 ## Suggested first steps
+*Superseded by the update below; kept for the record.*
 1. Page/feature inventory across the five repos (one afternoon).
 2. Design the `institutions` crosswalk table and load Carnegie into Neon.
 3. Add a script that exports a repo's CSV/JSON from the database, and use it on
@@ -158,3 +159,73 @@ Neon/Vercel setup, so those two are not hypothetical.
    committing: load one IPEDS year and one Carnegie year, measure, extrapolate to all years,
    then price Neon storage against that number. If Postgres gets too big or slow for
    whole-history analysis, add BigQuery for analysis and keep Postgres for serving slices.
+
+## Update (2026-11-09, against `main` at `b32b90d`)
+
+The first draft was written from a stale checkout. After pulling 34 commits, the
+picture is further along than the memo assumed.
+
+### What already exists
+- **IPEDS 2010–2024 is loaded** into Neon and served by a live Vercel site.
+  `load-year.ts` downloads each year's IPEDS release from nces.ed.gov (Final if
+  published, else Provisional), caches it locally, and upserts it.
+- **Precompute and caching are in place.** `materialize.ts` builds
+  `nationwide_trends` and `academic_similarity`; pages are cached until the data
+  changes; `/api/revalidate` drops the cache after a load. The earlier cost
+  recommendation ("cache and precompute") is therefore partly built.
+- **Known gap:** `REVALIDATE_SECRET` is still unset in Vercel (`TO_DO.md`), so a
+  data load doesn't refresh the live site until the next deploy.
+- **The repo is public**, and `.env.local` is gitignored. Keep any new source's
+  credentials and licensed data out of it.
+- `peer_network` was dropped. `/network` computes peers live instead, so "precompute
+  everything" is not a rule this project follows strictly.
+- **Not verified:** the database's actual size. This checkout has no `.env.local`
+  or `node_modules`, so I couldn't query Neon. Row counts I can see in the
+  docs: `enrollment` ~66,000 rows and `faculty` ~67,000 over all loaded years;
+  `completions_by_field` is the big table at roughly 72,000–145,000 rows per
+  year. To measure, run
+  `select relname, pg_total_relation_size(relid) from pg_stat_user_tables order by 2 desc`
+  against the production database.
+
+### A conflict with "all data, slice by SQL"
+The project rule is that **out-of-scope data is never stored**. For-profit
+institutions (`CONTROL = 3`) and certificate-only institutions are dropped at the
+loader, deliberately, so no query has to remember to filter them
+(`.claude/skills/institution-scope`). Rows for a school that left scope are kept
+only as a fact and a year in `institution_departures`.
+
+That is the opposite of your goal of keeping everything and slicing it in SQL.
+It is a real decision, not a detail. Options:
+1. **Keep the gate** and accept that the store is a curated slice. Simple and
+   safe, but you can never ask a question about for-profits without reloading.
+2. **Store everything, filter in views.** Load all institutions into a raw
+   schema, and give the public app a database role that can read only scoped
+   views (`in_scope` flag or a view). It keeps the rule that for-profits never
+   reach a user, but enforces it in the database instead of by omission.
+3. **Two databases**: a private full one for your own analysis, and the current
+   scoped one for the public site. Costs a second database but gives the cleanest
+   public/private line, which also helps the USNWR question.
+
+I'd lean to option 2 or 3. Either change reverses a rule set on 2026-10-12, so
+it is yours to make.
+
+### Revised first steps
+1. **Decide the scope question above** (keep the gate, or store everything
+   behind views).
+2. **Size it.** Run the query above, then load one more year or source and
+   extrapolate to every year you want.
+3. **Add the `institutions` crosswalk** keyed on UNITID, with room for other
+   sources' IDs (OPEID for Scorecard; Wikidata's IPEDS ID property for
+   Wikipedia, to be verified).
+4. **Add Carnegie as a second source.** IPEDS already carries `carnegie_basic`
+   for some years, but `college-dashboard` uses the separate 2025 Carnegie files
+   (xlsx), and you want every Carnegie edition. Its pipeline is a Python script
+   writing CSVs; it needs a Postgres loader beside `load-year.ts`.
+5. **Set `REVALIDATE_SECRET`** so loads reach the live site.
+6. Then port pages per the inventory, starting with Discover.
+
+### Hosting, revised
+The recommendation stands (Neon for the live database, GCS for raw files), with
+one addition: this project's loader pulls straight from NCES and keeps its cache
+on the local machine. For multi-source loads, moving that cache to a GCS bucket
+would let any machine rebuild the database without re-downloading.
